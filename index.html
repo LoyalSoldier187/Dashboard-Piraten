@@ -383,8 +383,32 @@ function build(){
       rows:u.rows.filter(r=>String(r.Lagerort).startsWith(prefix+"-"))};
     if(wantZero) u.extra.zero={label:"Europalettenlager 0er",
       rows:u.rows.filter(r=>r.Bemerkung==="Europalettenlager" && (+r[zeroCol]||0)===0)};
+    // Top 5 articles by total stock — per customer in merge mode, else for the unit
+    if(u.merged){
+      u.topByKunde=ok.map(s=>({kunde:s.kunde,top:topArticles(u.rows.filter(r=>r.Kunde===s.kunde))}));
+    }else{
+      u.top=topArticles(u.rows);
+    }
   });
   return {units,doMerge,prefix,zeroCol,wantLoc,wantZero};
+}
+
+// aggregate rows by ArtikelNummer, sum stock, keep name; return top 5 by stock
+function topArticles(rows,n){
+  n=n||5;
+  const map=new Map();
+  rows.forEach(r=>{
+    const key=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
+    let a=map.get(key);
+    if(!a){a={nr:key,name:r.ArtikelBezeichnung||"",best:0,lo:new Set()};map.set(key,a);}
+    a.best+=(+r["Aktueller Bestand"]||0);
+    a.lo.add(r.Lagerort);
+    if(!a.name && r.ArtikelBezeichnung) a.name=r.ArtikelBezeichnung;
+  });
+  return [...map.values()]
+    .map(a=>({nr:a.nr,name:a.name,best:a.best,lo:a.lo.size}))
+    .sort((x,y)=>y.best-x.best)
+    .slice(0,n);
 }
 
 // ---------- render dashboards ----------
@@ -429,6 +453,13 @@ function renderResult(){
   if(u.merged) v.appendChild(aggTable("Nach Kunde",["Kunde"],u.byKunde));
   v.appendChild(aggTable("Nach Lagerort-Art",["Lagerort-Art (Bemerkung)"],u.byBem));
 
+  // Top 5 articles by stock
+  if(u.merged){
+    u.topByKunde.forEach(t=>v.appendChild(topTable("Top 5 Artikel im Bestand · "+t.kunde,t.top)));
+  }else{
+    v.appendChild(topTable("Top 5 Artikel im Bestand",u.top));
+  }
+
   // extra tab summaries
   const ex=[];
   if(u.extra.loc) ex.push(u.extra.loc);
@@ -437,6 +468,35 @@ function renderResult(){
     cap.innerHTML=`<b>${esc(x.label)}</b>: ${fmt(x.rows.length)} Positionen (eigener Reiter in der Excel-Datei)`;
     v.appendChild(cap);
   });
+}
+
+function topTable(title,data){
+  const wrap=document.createElement("div");wrap.className="tbl-wrap";
+  const cap=document.createElement("div");cap.className="cap";cap.style.padding="11px 14px 0";
+  cap.innerHTML=`<b>${esc(title)}</b> <span style="font-weight:400;color:var(--grey)">· nach Gesamtbestand</span>`;
+  wrap.appendChild(cap);
+  const table=document.createElement("table");
+  const thead=document.createElement("thead");
+  thead.innerHTML="<tr><th style='text-align:center'>#</th><th style='text-align:left'>ArtikelNummer</th><th style='text-align:left'>ArtikelBezeichnung</th><th>Bestand</th><th>Lagerorte</th></tr>";
+  table.appendChild(thead);
+  const tbody=document.createElement("tbody");
+  if(!data.length){
+    tbody.innerHTML="<tr><td colspan='5' style='text-align:center;color:var(--grey);padding:18px'>Keine Artikel</td></tr>";
+  }else{
+    data.forEach((r,i)=>{
+      const tr=document.createElement("tr");
+      const rank=`<td style="font-weight:800;color:var(--gold)">${i+1}</td>`;
+      tr.innerHTML=rank
+        +`<td class="l" style="min-width:120px;white-space:nowrap">${esc(r.nr)}</td>`
+        +`<td class="l">${esc(r.name)}</td>`
+        +`<td style="font-weight:700;color:var(--navy)">${fmt(r.best)}</td>`
+        +`<td>${fmt(r.lo)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
 }
 
 // value columns shown after the group label
@@ -592,7 +652,25 @@ function dataSheet(wb,name,cols,rows,title,subtitle){
   return ws;
 }
 
-function aggSheet(wb,name,title,subtitle,groupHead,data){
+function topBlock(ws,startRow,heading,top){
+  // heading line
+  ws.getCell(startRow-1,1).value=heading;
+  ws.getCell(startRow-1,1).font={name:"Arial",size:12,bold:true,color:{argb:"FF"+NAVYtxt}};
+  const cols=["#","ArtikelNummer","ArtikelBezeichnung","Bestand","Lagerorte"];
+  cols.forEach((c,i)=>{const cell=ws.getCell(startRow,i+1);cell.value=c;styleHeader(cell);});
+  ws.getRow(startRow).height=26;
+  top.forEach((r,ri)=>{
+    const rank=ws.getCell(startRow+1+ri,1);rank.value=ri+1;styleBody(rank,ri,false);
+    rank.font={name:"Arial",size:10,bold:true,color:{argb:XGOLD}};
+    const nr=ws.getCell(startRow+1+ri,2);nr.value=r.nr;styleBody(nr,ri,true);
+    const nm=ws.getCell(startRow+1+ri,3);nm.value=r.name;styleBody(nm,ri,true);
+    const b=ws.getCell(startRow+1+ri,4);b.value=r.best;styleBody(b,ri,false);b.numFmt="#,##0";
+    const lo=ws.getCell(startRow+1+ri,5);lo.value=r.lo;styleBody(lo,ri,false);lo.numFmt="#,##0";
+  });
+  return startRow+top.length;
+}
+
+function aggSheet(wb,name,title,subtitle,groupHead,data,top){
   const ws=wb.addWorksheet(name);
   titleBlock(ws,title,subtitle,true);
   const cols=[groupHead,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte","0er-Lagerorte"];
@@ -608,8 +686,13 @@ function aggSheet(wb,name,title,subtitle,groupHead,data){
   const tr=hr+1+data.length;
   const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
   [T.pos,T.art,T.best,T.lo,T.zero].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
-  ws.columns=cols.map(c=>({width:WIDTHS[c]||14}));
-  setupPrint(ws,cols.length,hr);
+  ws.columns=[{width:30},{width:14},{width:15},{width:16},{width:17},{width:15}];
+  if(top && top.length){
+    // widen col C for names; place Top-5 below the agg table
+    ws.getColumn(3).width=Math.max(ws.getColumn(3).width||15,46);
+    topBlock(ws,tr+3,"Top 5 Artikel im Bestand",top);
+  }
+  setupPrint(ws,6,hr);
   return ws;
 }
 
@@ -638,8 +721,13 @@ function mainDashboard(wb,name,u){
     return tr;
   }
   const end1=block(5,null,"Kunde",u.byKunde);
-  block(end1+3,"Aufschlüsselung nach Lagerort-Art (alle Kunden)","Lagerort-Art (Bemerkung)",u.byBem);
+  let cur=block(end1+3,"Aufschlüsselung nach Lagerort-Art (alle Kunden)","Lagerort-Art (Bemerkung)",u.byBem);
   ws.columns=[{width:30},{width:15},{width:15},{width:16},{width:17},{width:15}];
+  // Top 5 per customer, stacked below
+  ws.getColumn(3).width=46;
+  (u.topByKunde||[]).forEach(t=>{
+    cur=topBlock(ws,cur+3,"Top 5 Artikel im Bestand · "+t.kunde,t.top);
+  });
   setupPrint(ws,6,5);
   return ws;
 }
@@ -652,7 +740,7 @@ function buildWorkbook(ExcelJS,result){
     const pfx=multiUnit?(u.title.slice(0,10)+" · "):"";
     const allCols=(u.merged?["Kunde"]:[]).concat(SRC_COLS,BLANK_COLS);
     if(u.merged) mainDashboard(wb,sheetNameSafe("Hauptdashboard",used),u);
-    else aggSheet(wb,sheetNameSafe(pfx+"Dashboard",used),u.title,"Lagerbestand – Übersicht nach Lagerort-Art","Lagerort-Art (Bemerkung)",u.byBem);
+    else aggSheet(wb,sheetNameSafe(pfx+"Dashboard",used),u.title,"Lagerbestand – Übersicht nach Lagerort-Art","Lagerort-Art (Bemerkung)",u.byBem,u.top);
 
     dataSheet(wb,sheetNameSafe(pfx+"Alle_sortiert",used),allCols,u.rows,
       u.merged?"Alle Positionen":u.title,
