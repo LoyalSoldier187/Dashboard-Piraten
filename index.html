@@ -395,7 +395,7 @@ function build(){
 
 // aggregate rows by ArtikelNummer, sum stock, keep name; return top 5 by stock
 function topArticles(rows,n){
-  n=n||5;
+  n=n||10;
   const map=new Map();
   rows.forEach(r=>{
     const key=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
@@ -453,11 +453,11 @@ function renderResult(){
   if(u.merged) v.appendChild(aggTable("Nach Kunde",["Kunde"],u.byKunde));
   v.appendChild(aggTable("Nach Lagerort-Art",["Lagerort-Art (Bemerkung)"],u.byBem));
 
-  // Top 5 articles by stock
+  // Top 10 articles by stock
   if(u.merged){
-    u.topByKunde.forEach(t=>v.appendChild(topTable("Top 5 Artikel im Bestand · "+t.kunde,t.top)));
+    u.topByKunde.forEach(t=>v.appendChild(topTable("Top 10 Artikel im Bestand · "+t.kunde,t.top)));
   }else{
-    v.appendChild(topTable("Top 5 Artikel im Bestand",u.top));
+    v.appendChild(topTable("Top 10 Artikel im Bestand",u.top));
   }
 
   // extra tab summaries
@@ -690,7 +690,7 @@ function aggSheet(wb,name,title,subtitle,groupHead,data,top){
   if(top && top.length){
     // widen col C for names; place Top-5 below the agg table
     ws.getColumn(3).width=Math.max(ws.getColumn(3).width||15,46);
-    topBlock(ws,tr+3,"Top 5 Artikel im Bestand",top);
+    topBlock(ws,tr+3,"Top 10 Artikel im Bestand",top);
   }
   setupPrint(ws,6,hr);
   return ws;
@@ -723,10 +723,10 @@ function mainDashboard(wb,name,u){
   const end1=block(5,null,"Kunde",u.byKunde);
   let cur=block(end1+3,"Aufschlüsselung nach Lagerort-Art (alle Kunden)","Lagerort-Art (Bemerkung)",u.byBem);
   ws.columns=[{width:30},{width:15},{width:15},{width:16},{width:17},{width:15}];
-  // Top 5 per customer, stacked below
+  // Top 10 per customer, stacked below
   ws.getColumn(3).width=46;
   (u.topByKunde||[]).forEach(t=>{
-    cur=topBlock(ws,cur+3,"Top 5 Artikel im Bestand · "+t.kunde,t.top);
+    cur=topBlock(ws,cur+3,"Top 10 Artikel im Bestand · "+t.kunde,t.top);
   });
   setupPrint(ws,6,5);
   return ws;
