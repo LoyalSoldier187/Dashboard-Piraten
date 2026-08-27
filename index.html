@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lager-Report · BelegteLagerorte-Aufbereitung</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+  :root{
+    --navy:#1F3864; --navy-dk:#15264A; --gold:#C9A227; --gold-soft:#E4C766;
+    --ink:#1a2333; --grey:#5b6472; --line:#dfe4ec; --alt:#EEF1F7;
+    --bg:#f6f8fb; --card:#ffffff; --ok:#1f7a4d; --warn:#a6491f;
+    --shadow:0 1px 2px rgba(20,38,74,.06),0 6px 24px rgba(20,38,74,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    color:var(--ink); background:var(--bg); line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ---- Masthead ---- */
+  header.mast{
+    background:linear-gradient(180deg,var(--navy) 0%,var(--navy-dk) 100%);
+    color:#fff; padding:20px 26px 0; position:relative;
+  }
+  header.mast::after{content:"";display:block;height:3px;
+    background:linear-gradient(90deg,var(--gold) 0%,var(--gold-soft) 60%,transparent 100%);}
+  .mast-row{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;padding-bottom:16px}
+  .mast h1{font-size:20px;letter-spacing:.4px;margin:0;font-weight:700}
+  .mast .tag{font-size:12.5px;color:#b9c4db;font-style:italic}
+  .mast .spacer{flex:1}
+  .mast .count-pill{font-size:12px;background:rgba(255,255,255,.12);
+    border:1px solid rgba(255,255,255,.18);padding:4px 11px;border-radius:20px;color:#eaf0fb}
+
+  main{max-width:1180px;margin:0 auto;padding:22px 20px 60px}
+
+  /* ---- Control bar ---- */
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);padding:18px 20px;margin-bottom:20px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:1.3px;
+    color:var(--navy);margin:0 0 14px;font-weight:700}
+  .panel h2 .idx{color:var(--gold);margin-right:8px}
+
+  .drop{
+    border:2px dashed #c4cede;border-radius:11px;background:#fbfcfe;
+    padding:30px 20px;text-align:center;transition:.18s;cursor:pointer;
+  }
+  .drop:hover,.drop.hot{border-color:var(--gold);background:#fffdf5}
+  .drop .big{font-size:15px;font-weight:600;color:var(--navy)}
+  .drop .sub{font-size:12.5px;color:var(--grey);margin-top:5px}
+  .drop svg{width:34px;height:34px;color:var(--navy);opacity:.55;margin-bottom:6px}
+
+  .files{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
+  .files li{display:flex;align-items:center;gap:10px;font-size:13px;
+    background:var(--alt);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .files .nm{font-weight:600;color:var(--navy)}
+  .files .meta{color:var(--grey);font-size:12px}
+  .files .rm{margin-left:auto;border:none;background:none;color:var(--grey);
+    cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:5px}
+  .files .rm:hover{background:#e2e7f0;color:var(--warn)}
+  .files .bad{color:var(--warn);font-size:12px;font-weight:600}
+
+  .opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
+  .opt-group{border:1px solid var(--line);border-radius:10px;padding:14px 15px;background:#fcfdff}
+  .opt-group .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+    color:var(--grey);font-weight:700;margin-bottom:10px}
+  .seg{display:flex;background:var(--alt);border-radius:8px;padding:3px;gap:3px}
+  .seg button{flex:1;border:none;background:none;padding:8px 6px;border-radius:6px;
+    font-size:13px;font-weight:600;color:var(--grey);cursor:pointer;transition:.15s}
+  .seg button.on{background:var(--navy);color:#fff;box-shadow:0 1px 3px rgba(20,38,74,.25)}
+  .check{display:flex;align-items:center;gap:9px;font-size:13.5px;margin:9px 0;cursor:pointer}
+  .check input{width:17px;height:17px;accent-color:var(--navy);cursor:pointer}
+  .mini{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--grey)}
+  .mini input[type=text]{width:64px;border:1px solid var(--line);border-radius:6px;
+    padding:5px 8px;font-size:13px;font-family:inherit}
+  .mini select{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;background:#fff}
+
+  .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:4px}
+  .btn{border:none;border-radius:9px;padding:12px 22px;font-size:14px;font-weight:700;
+    cursor:pointer;font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:9px}
+  .btn.primary{background:var(--navy);color:#fff}
+  .btn.primary:hover{background:var(--navy-dk)}
+  .btn.primary:disabled{background:#aab4c6;cursor:not-allowed}
+  .btn.gold{background:var(--gold);color:#3a2d05}
+  .btn.gold:hover{background:var(--gold-soft)}
+  .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)}
+  .btn.ghost:hover{border-color:var(--navy)}
+
+  /* ---- Results ---- */
+  #out{display:none}
+  .res-head{display:flex;align-items:center;gap:14px;margin:6px 0 16px;flex-wrap:wrap}
+  .res-head h2{font-size:17px;color:var(--navy);margin:0}
+  .res-head .spacer{flex:1}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;border-bottom:2px solid var(--line);padding-bottom:0}
+  .tabs button{border:none;background:none;padding:9px 15px;font-size:13px;font-weight:600;
+    color:var(--grey);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;transition:.15s}
+  .tabs button:hover{color:var(--navy)}
+  .tabs button.on{color:var(--navy);border-bottom-color:var(--gold)}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:13px;margin-bottom:20px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:11px;
+    padding:15px 17px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--gold)}
+  .kpi .n{font-size:26px;font-weight:800;color:var(--navy);letter-spacing:-.5px;
+    font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:11.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--grey);margin-top:3px}
+
+  .tbl-wrap{background:var(--card);border:1px solid var(--line);border-radius:11px;
+    box-shadow:var(--shadow);overflow:auto;margin-bottom:20px}
+  table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+  thead th{background:var(--navy);color:#fff;font-weight:700;text-align:center;
+    padding:11px 12px;position:sticky;top:0;white-space:nowrap;border-bottom:3px solid var(--gold)}
+  thead th:first-child{text-align:left}
+  tbody td{padding:8px 12px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+  tbody td.l{text-align:left;white-space:normal;min-width:220px}
+  tbody tr:nth-child(even){background:var(--alt)}
+  tbody tr.total{font-weight:800;background:var(--navy)!important;color:#fff}
+  tbody tr.total td{border-bottom:none}
+  .cap{font-size:12px;color:var(--grey);padding:9px 4px 0}
+  .empty{padding:40px;text-align:center;color:var(--grey);font-size:14px}
+
+  footer{max-width:1180px;margin:0 auto;padding:0 20px 40px;color:var(--grey);font-size:12px}
+  .hint{background:#fffdf5;border:1px solid var(--gold-soft);border-radius:9px;
+    padding:11px 14px;font-size:12.5px;color:#6b5417;margin-top:12px}
+  @media(max-width:560px){.mast h1{font-size:17px}.kpi .n{font-size:22px}}
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="mast-row">
+    <h1>Lager-Report</h1>
+    <span class="tag">BelegteLagerorte · Aufbereitung &amp; Dashboards</span>
+    <span class="spacer"></span>
+    <span class="count-pill" id="pill">Bereit</span>
+  </div>
+</header>
+
+<main>
+  <!-- STEP 1: upload -->
+  <section class="panel">
+    <h2><span class="idx">01</span>Reportings laden</h2>
+    <div class="drop" id="drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M12 16V4m0 0L8 8m4-4l4 4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round"/>
+      </svg>
+      <div class="big">Excel-Dateien hierher ziehen oder klicken</div>
+      <div class="sub">Eine oder mehrere <b>BelegteLagerorte</b>-Dateien (.xlsx) · Kopfzeile in Zeile 1 oder 7 wird automatisch erkannt</div>
+    </div>
+    <input type="file" id="file" accept=".xlsx,.xls" multiple hidden>
+    <ul class="files" id="filelist"></ul>
+  </section>
+
+  <!-- STEP 2: options -->
+  <section class="panel">
+    <h2><span class="idx">02</span>Aufbereitung einstellen</h2>
+    <div class="opts">
+      <div class="opt-group">
+        <div class="lbl">Modus bei mehreren Dateien</div>
+        <div class="seg" id="segMode">
+          <button data-mode="single" class="on">Einzeln</button>
+          <button data-mode="merge">Zusammenführen</button>
+        </div>
+        <div class="mini">Kundennamen aus Dateinamen übernommen</div>
+      </div>
+      <div class="opt-group">
+        <div class="lbl">Zusatz-Reiter</div>
+        <label class="check"><input type="checkbox" id="optLoc" checked> Standort-Reiter</label>
+        <div class="mini">Präfix <input type="text" id="locPrefix" value="64"> → Lagerorte <span id="prefEcho">64</span>-xx-xxx-xx</div>
+        <label class="check" style="margin-top:12px"><input type="checkbox" id="optZero" checked> Nullbestände Europalettenlager</label>
+        <div class="mini">Bestandsspalte
+          <select id="zeroCol"><option value="LO Bestand">LO Bestand</option><option value="Aktueller Bestand">Aktueller Bestand</option></select>
+        </div>
+      </div>
+      <div class="opt-group">
+        <div class="lbl">Ausgabe</div>
+        <div class="mini" style="margin-top:2px">Dashboards erscheinen unten zur Ansicht.</div>
+        <div class="mini">Excel-Download im gewohnten Navy/Gold-Layout, A4-quer, druckfertig.</div>
+      </div>
+    </div>
+    <div class="actions" style="margin-top:18px">
+      <button class="btn primary" id="run" disabled>Auswertung erstellen</button>
+      <button class="btn ghost" id="clear">Zurücksetzen</button>
+    </div>
+    <div class="hint" id="hint" style="display:none"></div>
+  </section>
+
+  <!-- STEP 3: results -->
+  <section id="out">
+    <div class="res-head">
+      <h2>Auswertung</h2>
+      <span class="spacer"></span>
+      <button class="btn gold" id="dl">Excel herunterladen</button>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div id="view"></div>
+  </section>
+</main>
+
+<footer>
+  Läuft vollständig lokal im Browser — keine Daten verlassen dein Gerät. · Erwartete Spalten: ArtikelNummer, ArtikelBezeichnung, VPE, LO Bestand, Lagerort, Bemerkung.
+</footer>
+
+<script>
+"use strict";
+const NAVY="1F3864", GOLD="C9A227";
+const SRC_COLS=["ArtikelNummer","ArtikelBezeichnung","VPE","LO Bestand","Lagerort"];
+const BLANK_COLS=["Anzahl","Umzugs-LO"];
+const REQUIRED=["ArtikelNummer","ArtikelBezeichnung","VPE","LO Bestand","Lagerort","Bemerkung"];
+
+let store=[];        // {name, kunde, rows:[], ok, error}
+let mode="single";
+let result=null;     // built model
+let activeTab=0;
+
+// ---------- helpers ----------
+const $=s=>document.querySelector(s);
+const fmt=n=>(n==null||isNaN(n))?"–":Number(n).toLocaleString("de-DE");
+const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function kundeFromName(fn){
+  return fn.replace(/\.[^.]+$/,"")
+           .replace(/_-_BelegteLagerorte.*/i,"")
+           .replace(/-?BelegteLagerorte.*/i,"")
+           .replace(/_/g," ").replace(/\s+/g," ").trim() || fn;
+}
+function pathKey(lo){
+  const m=/^(\d+)-(\d+)-(\d+)-(\d+)$/.exec(String(lo).trim());
+  return m?[+m[1],+m[2],+m[3],+m[4]]:[999,999,999,999];
+}
+function cmpPath(a,b){
+  const x=pathKey(a.Lagerort),y=pathKey(b.Lagerort);
+  for(let i=0;i<4;i++){if(x[i]!==y[i])return x[i]-y[i];}
+  return 0;
+}
+
+// find header row (0-based) by locating required columns
+function readWorkbook(buf){
+  const wb=XLSX.read(buf,{type:"array",cellDates:true});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+  let hr=-1;
+  for(let i=0;i<Math.min(grid.length,12);i++){
+    const row=(grid[i]||[]).map(c=>String(c==null?"":c).trim());
+    const hit=REQUIRED.filter(c=>row.includes(c)).length;
+    if(hit>=4){hr=i;break;}
+  }
+  if(hr<0) throw new Error("Kopfzeile nicht gefunden");
+  const head=grid[hr].map(c=>String(c==null?"":c).trim());
+  const rows=[];
+  for(let i=hr+1;i<grid.length;i++){
+    const r=grid[i]; if(!r) continue;
+    const o={}; let any=false;
+    head.forEach((h,ci)=>{ if(h){o[h]=r[ci]; if(r[ci]!=null&&r[ci]!=="")any=true;} });
+    if(any && o.Lagerort!=null && String(o.Lagerort).trim()!=="") rows.push(o);
+  }
+  const missing=REQUIRED.filter(c=>!head.includes(c));
+  return {rows,missing};
+}
+
+// ---------- file intake ----------
+const drop=$("#drop"), fileInput=$("#file");
+drop.onclick=()=>fileInput.click();
+["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("hot");}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("hot");}));
+drop.addEventListener("drop",ev=>handleFiles(ev.dataTransfer.files));
+fileInput.addEventListener("change",ev=>handleFiles(ev.target.files));
+
+function readFileAsync(f){
+  return new Promise(resolve=>{
+    const rd=new FileReader();
+    rd.onload=()=>{
+      try{
+        const {rows,missing}=readWorkbook(new Uint8Array(rd.result));
+        if(missing.length) resolve({name:f.name,kunde:kundeFromName(f.name),rows:[],ok:false,error:"Fehlende Spalten: "+missing.join(", ")});
+        else resolve({name:f.name,kunde:kundeFromName(f.name),rows,ok:true});
+      }catch(err){
+        resolve({name:f.name,kunde:kundeFromName(f.name),rows:[],ok:false,error:err.message});
+      }
+    };
+    rd.onerror=()=>resolve({name:f.name,kunde:kundeFromName(f.name),rows:[],ok:false,error:"Datei nicht lesbar"});
+    rd.readAsArrayBuffer(f);
+  });
+}
+async function handleFiles(fileList){
+  const files=[...fileList].filter(f=>/\.xlsx?$/i.test(f.name));
+  if(!files.length) return;
+  $("#pill").textContent="Lese …";
+  const parsed=await Promise.all(files.map(readFileAsync));
+  parsed.forEach(p=>store.push(p));
+  renderFiles();
+}
+
+function renderFiles(){
+  const ul=$("#filelist"); ul.innerHTML="";
+  store.forEach((s,i)=>{
+    const li=document.createElement("li");
+    li.innerHTML = s.ok
+      ? `<span class="nm">${esc(s.kunde)}</span><span class="meta">${esc(s.name)} · ${fmt(s.rows.length)} Positionen</span>`
+      : `<span class="nm">${esc(s.name)}</span><span class="bad">⚠ ${esc(s.error)}</span>`;
+    const rm=document.createElement("button"); rm.className="rm"; rm.textContent="×";
+    rm.onclick=()=>{store.splice(i,1);renderFiles();};
+    li.appendChild(rm); ul.appendChild(li);
+  });
+  const okN=store.filter(s=>s.ok).length;
+  $("#pill").textContent = store.length?`${okN} Datei${okN!==1?"en":""} bereit`:"Bereit";
+  $("#run").disabled = okN===0;
+  const multi=store.filter(s=>s.ok).length>1;
+  $("#segMode").style.opacity=multi?"1":".5";
+  $("#segMode").style.pointerEvents=multi?"auto":"none";
+}
+
+// ---------- options wiring ----------
+$("#segMode").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  mode=b.dataset.mode;
+  [...$("#segMode").children].forEach(x=>x.classList.toggle("on",x===b));
+});
+$("#locPrefix").addEventListener("input",e=>{
+  $("#prefEcho").textContent=e.target.value.trim()||"64";
+});
+$("#clear").onclick=()=>{store=[];result=null;renderFiles();$("#out").style.display="none";$("#hint").style.display="none";};
+
+// ---------- build model ----------
+function aggBy(rows,keyFn){
+  const map=new Map();
+  rows.forEach(r=>{
+    const k=keyFn(r); if(k==null)return;
+    let a=map.get(k); if(!a){a={key:k,pos:0,art:new Set(),best:0,lo:new Set()};map.set(k,a);}
+    a.pos++; a.art.add(r.ArtikelNummer); a.best+=(+r["Aktueller Bestand"]||0); a.lo.add(r.Lagerort);
+  });
+  return [...map.values()].map(a=>({key:a.key,pos:a.pos,art:a.art.size,best:a.best,lo:a.lo.size}))
+                          .sort((x,y)=>y.pos-x.pos);
+}
+function build(){
+  const ok=store.filter(s=>s.ok);
+  const prefix=($("#locPrefix").value.trim()||"64");
+  const zeroCol=$("#zeroCol").value;
+  const wantLoc=$("#optLoc").checked, wantZero=$("#optZero").checked;
+  const doMerge = mode==="merge" && ok.length>1;
+
+  const units=[];
+  if(doMerge){
+    const rows=[]; ok.forEach(s=>s.rows.forEach(r=>rows.push({...r,Kunde:s.kunde})));
+    units.push({title:"Sammelauswertung – "+ok.length+" Kunden",
+                subtitle:ok.map(s=>s.kunde).join(" · "), rows, merged:true});
+  }else{
+    ok.forEach(s=>units.push({title:s.kunde,subtitle:s.name,rows:s.rows.map(r=>({...r})),merged:false}));
+  }
+
+  units.forEach(u=>{
+    u.rows.sort(cmpPath);
+    u.byBem=aggBy(u.rows,r=>r.Bemerkung==null?"(ohne)":r.Bemerkung);
+    if(u.merged) u.byKunde=aggBy(u.rows,r=>r.Kunde);
+    u.kpi={
+      pos:u.rows.length,
+      art:new Set(u.rows.map(r=>r.ArtikelNummer)).size,
+      best:u.rows.reduce((s,r)=>s+(+r["Aktueller Bestand"]||0),0),
+      lo:new Set(u.rows.map(r=>r.Lagerort)).size,
+      bem:new Set(u.rows.map(r=>r.Bemerkung)).size
+    };
+    u.extra={};
+    if(wantLoc) u.extra.loc={label:"Standort "+prefix,
+      rows:u.rows.filter(r=>String(r.Lagerort).startsWith(prefix+"-"))};
+    if(wantZero) u.extra.zero={label:"Europalettenlager 0er",
+      rows:u.rows.filter(r=>r.Bemerkung==="Europalettenlager" && (+r[zeroCol]||0)===0)};
+  });
+  return {units,doMerge,prefix,zeroCol,wantLoc,wantZero};
+}
+
+// ---------- render dashboards ----------
+$("#run").onclick=()=>{
+  result=build();
+  activeTab=0;
+  renderResult();
+  $("#out").style.display="block";
+  $("#out").scrollIntoView({behavior:"smooth",block:"start"});
+  // notes
+  const notes=[];
+  const emoji=result.units.some(u=>u.rows.some(r=>/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(String(r.ArtikelBezeichnung||""))));
+  if(emoji) notes.push("Einige Artikelbezeichnungen enthalten Emoji/Sonderzeichen — sie bleiben unverändert erhalten.");
+  if(result.doMerge) notes.push("Zusammengeführt: die Spalte „Kunde“ steht in allen Blättern voran.");
+  const h=$("#hint");
+  if(notes.length){h.style.display="block";h.innerHTML="ℹ︎ "+notes.join(" ");}else h.style.display="none";
+};
+
+function renderResult(){
+  const tabs=$("#tabs"); tabs.innerHTML="";
+  result.units.forEach((u,i)=>{
+    const b=document.createElement("button");
+    b.textContent=u.merged?"Sammelauswertung":u.title;
+    b.className=i===activeTab?"on":"";
+    b.onclick=()=>{activeTab=i;renderResult();};
+    tabs.appendChild(b);
+  });
+  tabs.style.display=result.units.length>1?"flex":"none";
+  const u=result.units[activeTab];
+  const v=$("#view"); v.innerHTML="";
+
+  // KPIs
+  const kp=document.createElement("div"); kp.className="kpis";
+  const items=[["Positionen",u.kpi.pos],["Versch. Artikel",u.kpi.art],
+               ["Gesamtbestand",u.kpi.best],["Belegte Lagerorte",u.kpi.lo],["Lagerort-Arten",u.kpi.bem]];
+  items.forEach(([l,n])=>{
+    const d=document.createElement("div");d.className="kpi";
+    d.innerHTML=`<div class="n">${fmt(n)}</div><div class="l">${l}</div>`;kp.appendChild(d);
+  });
+  v.appendChild(kp);
+
+  if(u.merged) v.appendChild(aggTable("Nach Kunde",["Kunde","Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"],u.byKunde));
+  v.appendChild(aggTable("Nach Lagerort-Art",["Lagerort-Art (Bemerkung)","Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"],u.byBem));
+
+  // extra tab summaries
+  const ex=[];
+  if(u.extra.loc) ex.push(u.extra.loc);
+  if(u.extra.zero) ex.push(u.extra.zero);
+  ex.forEach(x=>{
+    const cap=document.createElement("div");cap.className="cap";
+    cap.innerHTML=`<b>${esc(x.label)}</b>: ${fmt(x.rows.length)} Positionen (eigener Reiter in der Excel-Datei)`;
+    v.appendChild(cap);
+  });
+}
+
+function aggTable(title,cols,data){
+  const wrap=document.createElement("div");wrap.className="tbl-wrap";
+  const cap=`<div class="cap" style="padding:11px 14px 0"><b>${esc(title)}</b></div>`;
+  let h="<table><thead><tr>"+cols.map((c,i)=>`<th>${esc(c)}</th>`).join("")+"</tr></thead><tbody>";
+  const tot={pos:0,art:0,best:0,lo:0};
+  data.forEach(r=>{
+    tot.pos+=r.pos;tot.art+=r.art;tot.best+=r.best;tot.lo+=r.lo;
+    h+=`<tr><td class="l">${esc(r.key)}</td><td>${fmt(r.pos)}</td><td>${fmt(r.art)}</td><td>${fmt(r.best)}</td><td>${fmt(r.lo)}</td></tr>`;
+  });
+  h+=`<tr class="total"><td class="l">GESAMT</td><td>${fmt(tot.pos)}</td><td>${fmt(tot.art)}</td><td>${fmt(tot.best)}</td><td>${fmt(tot.lo)}</td></tr>`;
+  h+="</tbody></table>";
+  wrap.innerHTML=cap+h;
+  return wrap;
+}
+
+// ==== ExcelJS export module (verified in Node against real files) ====
+// Shared ExcelJS build logic — used both for Node test and browser app.
+// Exposes buildWorkbook(result) -> ExcelJS.Workbook
+const XNAVY="FF1F3864", NAVYtxt="1F3864", XGOLD="FFC9A227";
+const WIDTHS={Kunde:18,ArtikelNummer:16,ArtikelBezeichnung:52,VPE:7,"LO Bestand":11,Lagerort:15,Anzahl:10,"Umzugs-LO":16,
+  "Lagerort-Art (Bemerkung)":30,Positionen:16,"Versch. Artikel":16,Gesamtbestand:16,"Belegte Lagerorte":18};
+
+function sheetNameSafe(n,used){
+  let base=String(n).replace(/[\\\/\*\?:\[\]]/g,"").trim().slice(0,31)||"Blatt";
+  let name=base,k=1;
+  while(used.has(name.toLowerCase())){k++;name=base.slice(0,28)+"_"+k;}
+  used.add(name.toLowerCase());return name;
+}
+function thin(){return {style:"thin",color:{argb:"FFD9D9DF"}};}
+function styleHeader(cell){
+  cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:XNAVY}};
+  cell.font={name:"Arial",size:10.5,bold:true,color:{argb:"FFFFFFFF"}};
+  cell.alignment={horizontal:"center",vertical:"middle",wrapText:true};
+  cell.border={top:{style:"medium",color:{argb:XNAVY}},bottom:{style:"thick",color:{argb:XGOLD}},left:thin(),right:thin()};
+}
+function styleBody(cell,ri,left){
+  cell.font={name:"Arial",size:10};
+  cell.alignment=left?{horizontal:"left",vertical:"middle",wrapText:true,indent:1}:{horizontal:"center",vertical:"middle"};
+  cell.fill={type:"pattern",pattern:"solid",fgColor:{argb: ri%2===0?"FFEEF1F7":"FFFFFFFF"}};
+  cell.border={bottom:thin(),left:thin(),right:thin()};
+}
+function styleTotal(cell,left){
+  cell.font={name:"Arial",size:10.5,bold:true,color:{argb:"FFFFFFFF"}};
+  cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:XNAVY}};
+  cell.alignment=left?{horizontal:"left",vertical:"middle",indent:1}:{horizontal:"center",vertical:"middle"};
+  cell.border={top:{style:"thick",color:{argb:XGOLD}},bottom:{style:"medium",color:{argb:XNAVY}},left:thin(),right:thin()};
+}
+function setupPrint(ws,ncol,headerRow){
+  ws.pageSetup={orientation:"landscape",paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,
+    horizontalCentered:true,margins:{left:.3,right:.3,top:.4,bottom:.4,header:.2,footer:.2}};
+  ws.headerFooter={oddFooter:"&L&A&RSeite &P von &N"};
+  ws.views=[{state:"frozen",ySplit:headerRow}];
+  ws.pageSetup.printTitlesRow=`1:${headerRow}`;
+}
+
+function titleBlock(ws,title,subtitle,accentGold){
+  ws.getCell("A1").value=title;
+  ws.getCell("A1").font={name:"Arial",size:15,bold:true,color:{argb:"FF"+NAVYtxt}};
+  ws.getRow(1).height=20;
+  if(subtitle){
+    ws.getCell("A2").value=subtitle;
+    ws.getCell("A2").font=accentGold?{name:"Arial",size:12,bold:true,color:{argb:XGOLD}}
+                                     :{name:"Arial",size:9,italic:true,color:{argb:"FF595959"}};
+  }
+}
+
+function dataSheet(wb,name,cols,rows,title,subtitle){
+  const ws=wb.addWorksheet(name,{properties:{defaultRowHeight:15}});
+  titleBlock(ws,title,subtitle);
+  const hr=4;
+  cols.forEach((c,i)=>{const cell=ws.getCell(hr,i+1);cell.value=c;styleHeader(cell);});
+  ws.getRow(hr).height=26;
+  rows.forEach((row,ri)=>{
+    cols.forEach((c,ci)=>{
+      const left=c==="ArtikelBezeichnung";
+      let v=BLANK_COLS.includes(c)?null:row[c];
+      const cell=ws.getCell(hr+1+ri,ci+1);
+      cell.value=(v===undefined?null:v);
+      styleBody(cell,ri,left);
+    });
+    ws.getRow(hr+1+ri).height=18;
+  });
+  ws.columns=cols.map(c=>({width:WIDTHS[c]||12}));
+  setupPrint(ws,cols.length,hr);
+  return ws;
+}
+
+function aggSheet(wb,name,title,subtitle,groupHead,data){
+  const ws=wb.addWorksheet(name);
+  titleBlock(ws,title,subtitle,true);
+  const cols=[groupHead,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"];
+  const hr=4;
+  cols.forEach((c,i)=>{const cell=ws.getCell(hr,i+1);cell.value=c;styleHeader(cell);});
+  ws.getRow(hr).height=26;
+  const T={pos:0,art:0,best:0,lo:0};
+  data.forEach((r,ri)=>{
+    T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;
+    const c0=ws.getCell(hr+1+ri,1);c0.value=r.key;styleBody(c0,ri,true);
+    [r.pos,r.art,r.best,r.lo].forEach((v,k)=>{const c=ws.getCell(hr+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});
+  });
+  const tr=hr+1+data.length;
+  const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
+  [T.pos,T.art,T.best,T.lo].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
+  ws.columns=cols.map(c=>({width:WIDTHS[c]||14}));
+  setupPrint(ws,cols.length,hr);
+  return ws;
+}
+
+function mainDashboard(wb,name,u){
+  const ws=wb.addWorksheet(name);
+  ws.getCell("A1").value=u.title;
+  ws.getCell("A1").font={name:"Arial",size:17,bold:true,color:{argb:"FF"+NAVYtxt}};
+  ws.getRow(1).height=24;
+  ws.getCell("A2").value=u.subtitle;
+  ws.getCell("A2").font={name:"Arial",size:12,bold:true,color:{argb:XGOLD}};
+  ws.getCell("A3").value="Zusammengeführt · sortiert & wegoptimiert nach Lagerort (Gang → Regal → Ebene → Platz)";
+  ws.getCell("A3").font={name:"Arial",size:9,italic:true,color:{argb:"FF595959"}};
+
+  function block(startRow,head,groupLabel,data){
+    const cols=[groupLabel,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"];
+    if(head){ws.getCell(startRow-1,1).value=head;ws.getCell(startRow-1,1).font={name:"Arial",size:12,bold:true,color:{argb:"FF"+NAVYtxt}};}
+    cols.forEach((c,i)=>{const cell=ws.getCell(startRow,i+1);cell.value=c;styleHeader(cell);});
+    ws.getRow(startRow).height=26;
+    const T={pos:0,art:0,best:0,lo:0};
+    data.forEach((r,ri)=>{T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;
+      const c0=ws.getCell(startRow+1+ri,1);c0.value=r.key;styleBody(c0,ri,true);
+      [r.pos,r.art,r.best,r.lo].forEach((v,k)=>{const c=ws.getCell(startRow+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});});
+    const tr=startRow+1+data.length;
+    const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
+    [T.pos,T.art,T.best,T.lo].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
+    return tr;
+  }
+  const end1=block(5,null,"Kunde",u.byKunde);
+  block(end1+3,"Aufschlüsselung nach Lagerort-Art (alle Kunden)","Lagerort-Art (Bemerkung)",u.byBem);
+  ws.columns=[{width:30},{width:17},{width:17},{width:17},{width:18}];
+  setupPrint(ws,5,5);
+  return ws;
+}
+
+function buildWorkbook(ExcelJS,result){
+  const wb=new ExcelJS.Workbook();
+  const used=new Set();
+  const multiUnit=result.units.length>1 && !result.doMerge;
+  result.units.forEach(u=>{
+    const pfx=multiUnit?(u.title.slice(0,10)+" · "):"";
+    const allCols=(u.merged?["Kunde"]:[]).concat(SRC_COLS,BLANK_COLS);
+    if(u.merged) mainDashboard(wb,sheetNameSafe("Hauptdashboard",used),u);
+    else aggSheet(wb,sheetNameSafe(pfx+"Dashboard",used),u.title,"Lagerbestand – Übersicht nach Lagerort-Art","Lagerort-Art (Bemerkung)",u.byBem);
+
+    dataSheet(wb,sheetNameSafe(pfx+"Alle_sortiert",used),allCols,u.rows,
+      u.merged?"Alle Positionen":u.title,
+      u.merged?"Alle Kunden · gruppiert nach Kunde · wegoptimiert":(u.rows.length+" Positionen · wegoptimiert nach Lagerort"));
+
+    if(u.extra.loc) dataSheet(wb,sheetNameSafe(pfx+u.extra.loc.label,used),allCols,u.extra.loc.rows,
+      u.extra.loc.label,u.extra.loc.rows.length+" Positionen · alle Lagerorte "+result.prefix+"-xx-xxx-xx · wegoptimiert");
+    if(u.extra.zero) dataSheet(wb,sheetNameSafe(pfx+"Europal. 0er",used),allCols,u.extra.zero.rows,
+      "Europalettenlager – Nullbestände",u.extra.zero.rows.length+" Positionen mit "+result.zeroCol+" = 0 · wegoptimiert");
+
+    const byBem={};
+    u.rows.forEach(r=>{(byBem[r.Bemerkung]=byBem[r.Bemerkung]||[]).push(r);});
+    Object.keys(byBem).sort((a,b)=>byBem[b].length-byBem[a].length).forEach(bem=>{
+      dataSheet(wb,sheetNameSafe(pfx+bem,used),allCols,byBem[bem],bem,byBem[bem].length+" Positionen · wegoptimiert nach Lagerort");
+    });
+  });
+  return wb;
+}
+
+// ---------- Excel export (ExcelJS – full styling) ----------
+$("#dl").onclick=async ()=>{
+  if(!result) return;
+  const btn=$("#dl"); const old=btn.textContent;
+  btn.disabled=true; btn.textContent="Erzeuge Excel …";
+  try{
+    const wb=buildWorkbook(ExcelJS,result);
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const fname = result.doMerge ? "Sammelauswertung_BelegteLagerorte.xlsx"
+                : (result.units.length===1 ? result.units[0].title.replace(/[^\w\u00C0-\u017F]+/g,"_").replace(/^_+|_+$/g,"")+"_SORTIERT.xlsx"
+                                            : "Auswertung_BelegteLagerorte.xlsx");
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob); a.download=fname; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  }catch(err){
+    alert("Excel-Erstellung fehlgeschlagen: "+err.message);
+    console.error(err);
+  }finally{
+    btn.disabled=false; btn.textContent=old;
+  }
+};
+
+</script>
+</body>
+</html>
