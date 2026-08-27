@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lager-Report · BelegteLagerorte-Aufbereitung</title>
+<title>Dashboard-Piraten · BelegteLagerorte-Aufbereitung</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
@@ -118,6 +118,23 @@
   tbody tr:nth-child(even){background:var(--alt)}
   tbody tr.total{font-weight:800;background:var(--navy)!important;color:#fff}
   tbody tr.total td{border-bottom:none}
+  tbody tr.pick{cursor:pointer;transition:background .12s}
+  tbody tr.pick:hover td{background:#e3ebf9}
+  tbody tr.pick.sel td{background:#fff7e0!important;box-shadow:inset 0 0 0 9999px rgba(201,162,39,.10)}
+  tbody tr.pick.sel td:first-child{box-shadow:inset 3px 0 0 var(--gold),inset 0 0 0 9999px rgba(201,162,39,.10)}
+  .subbar{flex-direction:column;gap:10px;padding:14px 16px;background:linear-gradient(180deg,#fffdf5,#fff);
+    border-top:2px solid var(--gold)}
+  .subhead{font-size:12.5px;color:var(--navy);font-weight:700;display:flex;align-items:center;gap:10px}
+  .subhead .subn{background:var(--gold);color:#3a2d05;border-radius:20px;padding:1px 9px;font-size:12px}
+  .subclear{margin-left:auto;border:1px solid var(--line);background:#fff;color:var(--grey);
+    font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;font-family:inherit}
+  .subclear:hover{border-color:var(--warn);color:var(--warn)}
+  .subsel{font-size:12px;color:var(--grey);font-style:italic;line-height:1.4}
+  .subgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+  .subcell{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;text-align:center}
+  .subcell .sv{font-size:19px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums}
+  .subcell .sv.warn{color:var(--warn)}
+  .subcell .sl{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey);margin-top:2px}
   .cap{font-size:12px;color:var(--grey);padding:9px 4px 0}
   .empty{padding:40px;text-align:center;color:var(--grey);font-size:14px}
 
@@ -130,7 +147,7 @@
 <body>
 <header class="mast">
   <div class="mast-row">
-    <h1>Lager-Report</h1>
+    <h1>Dashboard-Piraten</h1>
     <span class="tag">BelegteLagerorte · Aufbereitung &amp; Dashboards</span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
@@ -323,14 +340,15 @@ $("#locPrefix").addEventListener("input",e=>{
 $("#clear").onclick=()=>{store=[];result=null;renderFiles();$("#out").style.display="none";$("#hint").style.display="none";};
 
 // ---------- build model ----------
-function aggBy(rows,keyFn){
+function aggBy(rows,keyFn,zeroCol){
   const map=new Map();
   rows.forEach(r=>{
     const k=keyFn(r); if(k==null)return;
-    let a=map.get(k); if(!a){a={key:k,pos:0,art:new Set(),best:0,lo:new Set()};map.set(k,a);}
+    let a=map.get(k); if(!a){a={key:k,pos:0,art:new Set(),best:0,lo:new Set(),zero:0};map.set(k,a);}
     a.pos++; a.art.add(r.ArtikelNummer); a.best+=(+r["Aktueller Bestand"]||0); a.lo.add(r.Lagerort);
+    if((+r[zeroCol]||0)===0) a.zero++;
   });
-  return [...map.values()].map(a=>({key:a.key,pos:a.pos,art:a.art.size,best:a.best,lo:a.lo.size}))
+  return [...map.values()].map(a=>({key:a.key,pos:a.pos,art:a.art.size,best:a.best,lo:a.lo.size,zero:a.zero}))
                           .sort((x,y)=>y.pos-x.pos);
 }
 function build(){
@@ -351,8 +369,8 @@ function build(){
 
   units.forEach(u=>{
     u.rows.sort(cmpPath);
-    u.byBem=aggBy(u.rows,r=>r.Bemerkung==null?"(ohne)":r.Bemerkung);
-    if(u.merged) u.byKunde=aggBy(u.rows,r=>r.Kunde);
+    u.byBem=aggBy(u.rows,r=>r.Bemerkung==null?"(ohne)":r.Bemerkung,zeroCol);
+    if(u.merged) u.byKunde=aggBy(u.rows,r=>r.Kunde,zeroCol);
     u.kpi={
       pos:u.rows.length,
       art:new Set(u.rows.map(r=>r.ArtikelNummer)).size,
@@ -408,13 +426,12 @@ function renderResult(){
   });
   v.appendChild(kp);
 
-  if(u.merged) v.appendChild(aggTable("Nach Kunde",["Kunde","Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"],u.byKunde));
-  v.appendChild(aggTable("Nach Lagerort-Art",["Lagerort-Art (Bemerkung)","Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"],u.byBem));
+  if(u.merged) v.appendChild(aggTable("Nach Kunde",["Kunde"],u.byKunde));
+  v.appendChild(aggTable("Nach Lagerort-Art",["Lagerort-Art (Bemerkung)"],u.byBem));
 
   // extra tab summaries
   const ex=[];
   if(u.extra.loc) ex.push(u.extra.loc);
-  if(u.extra.zero) ex.push(u.extra.zero);
   ex.forEach(x=>{
     const cap=document.createElement("div");cap.className="cap";
     cap.innerHTML=`<b>${esc(x.label)}</b>: ${fmt(x.rows.length)} Positionen (eigener Reiter in der Excel-Datei)`;
@@ -422,18 +439,84 @@ function renderResult(){
   });
 }
 
-function aggTable(title,cols,data){
+// value columns shown after the group label
+const VCOLS=[
+  {h:"Positionen",     k:"pos"},
+  {h:"Versch. Artikel",k:"art"},
+  {h:"Gesamtbestand",  k:"best"},
+  {h:"Belegte Lagerorte",k:"lo"},
+  {h:"0er-Lagerorte",  k:"zero"}
+];
+
+function aggTable(title,groupCols,data){
   const wrap=document.createElement("div");wrap.className="tbl-wrap";
-  const cap=`<div class="cap" style="padding:11px 14px 0"><b>${esc(title)}</b></div>`;
-  let h="<table><thead><tr>"+cols.map((c,i)=>`<th>${esc(c)}</th>`).join("")+"</tr></thead><tbody>";
-  const tot={pos:0,art:0,best:0,lo:0};
-  data.forEach(r=>{
-    tot.pos+=r.pos;tot.art+=r.art;tot.best+=r.best;tot.lo+=r.lo;
-    h+=`<tr><td class="l">${esc(r.key)}</td><td>${fmt(r.pos)}</td><td>${fmt(r.art)}</td><td>${fmt(r.best)}</td><td>${fmt(r.lo)}</td></tr>`;
+  const cap=document.createElement("div");cap.className="cap";cap.style.padding="11px 14px 0";
+  cap.innerHTML=`<b>${esc(title)}</b> <span style="font-weight:400;color:var(--grey)">· Zeilen anklicken für Zwischensumme</span>`;
+  wrap.appendChild(cap);
+
+  const table=document.createElement("table");
+  const groupLabel=groupCols[0];
+  const heads=[groupLabel,...VCOLS.map(c=>c.h)];
+  const thead=document.createElement("thead");
+  const htr=document.createElement("tr");
+  heads.forEach(h=>{const th=document.createElement("th");th.textContent=h;htr.appendChild(th);});
+  thead.appendChild(htr);table.appendChild(thead);
+
+  const tbody=document.createElement("tbody");
+  const tot={pos:0,art:0,best:0,lo:0,zero:0};
+  const selected=new Set();
+
+  data.forEach((r,idx)=>{
+    tot.pos+=r.pos;tot.art+=r.art;tot.best+=r.best;tot.lo+=r.lo;tot.zero+=r.zero;
+    const tr=document.createElement("tr");
+    tr.className="pick";tr.dataset.i=idx;
+    const td0=document.createElement("td");td0.className="l";td0.textContent=r.key;tr.appendChild(td0);
+    VCOLS.forEach(c=>{
+      const td=document.createElement("td");
+      td.textContent=fmt(r[c.k]);
+      if(c.k==="zero" && r.zero>0){td.style.fontWeight="700";td.style.color="var(--warn)";}
+      tr.appendChild(td);
+    });
+    tr.addEventListener("click",()=>{
+      if(selected.has(idx)){selected.delete(idx);tr.classList.remove("sel");}
+      else{selected.add(idx);tr.classList.add("sel");}
+      updateSub();
+    });
+    tbody.appendChild(tr);
   });
-  h+=`<tr class="total"><td class="l">GESAMT</td><td>${fmt(tot.pos)}</td><td>${fmt(tot.art)}</td><td>${fmt(tot.best)}</td><td>${fmt(tot.lo)}</td></tr>`;
-  h+="</tbody></table>";
-  wrap.innerHTML=cap+h;
+
+  // GESAMT row
+  const trT=document.createElement("tr");trT.className="total";
+  const tdL=document.createElement("td");tdL.className="l";tdL.textContent="GESAMT";trT.appendChild(tdL);
+  VCOLS.forEach(c=>{const td=document.createElement("td");td.textContent=fmt(tot[c.k]);trT.appendChild(td);});
+  tbody.appendChild(trT);
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  // subtotal bar (hidden until a row is picked)
+  const bar=document.createElement("div");bar.className="subbar";bar.style.display="none";
+  wrap.appendChild(bar);
+
+  function updateSub(){
+    if(selected.size===0){bar.style.display="none";return;}
+    const s={pos:0,art:0,best:0,lo:0,zero:0};
+    selected.forEach(i=>{const r=data[i];s.pos+=r.pos;s.art+=r.art;s.best+=r.best;s.lo+=r.lo;s.zero+=r.zero;});
+    const names=[...selected].map(i=>data[i].key).join(", ");
+    bar.style.display="flex";
+    bar.innerHTML=
+      `<div class="subhead"><span class="subn">${selected.size}</span> ausgewählt`
+      +`<button class="subclear">zurücksetzen</button></div>`
+      +`<div class="subsel">${esc(names)}</div>`
+      +`<div class="subgrid">`
+      +VCOLS.map(c=>`<div class="subcell"><div class="sv${c.k==="zero"&&s.zero>0?" warn":""}">${fmt(s[c.k])}</div><div class="sl">${esc(c.h)}</div></div>`).join("")
+      +`</div>`;
+    bar.querySelector(".subclear").addEventListener("click",e=>{
+      e.stopPropagation();
+      selected.clear();
+      tbody.querySelectorAll("tr.sel").forEach(x=>x.classList.remove("sel"));
+      updateSub();
+    });
+  }
   return wrap;
 }
 
@@ -512,19 +595,19 @@ function dataSheet(wb,name,cols,rows,title,subtitle){
 function aggSheet(wb,name,title,subtitle,groupHead,data){
   const ws=wb.addWorksheet(name);
   titleBlock(ws,title,subtitle,true);
-  const cols=[groupHead,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"];
+  const cols=[groupHead,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte","0er-Lagerorte"];
   const hr=4;
   cols.forEach((c,i)=>{const cell=ws.getCell(hr,i+1);cell.value=c;styleHeader(cell);});
   ws.getRow(hr).height=26;
-  const T={pos:0,art:0,best:0,lo:0};
+  const T={pos:0,art:0,best:0,lo:0,zero:0};
   data.forEach((r,ri)=>{
-    T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;
+    T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;T.zero+=(r.zero||0);
     const c0=ws.getCell(hr+1+ri,1);c0.value=r.key;styleBody(c0,ri,true);
-    [r.pos,r.art,r.best,r.lo].forEach((v,k)=>{const c=ws.getCell(hr+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});
+    [r.pos,r.art,r.best,r.lo,r.zero||0].forEach((v,k)=>{const c=ws.getCell(hr+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});
   });
   const tr=hr+1+data.length;
   const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
-  [T.pos,T.art,T.best,T.lo].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
+  [T.pos,T.art,T.best,T.lo,T.zero].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
   ws.columns=cols.map(c=>({width:WIDTHS[c]||14}));
   setupPrint(ws,cols.length,hr);
   return ws;
@@ -541,23 +624,23 @@ function mainDashboard(wb,name,u){
   ws.getCell("A3").font={name:"Arial",size:9,italic:true,color:{argb:"FF595959"}};
 
   function block(startRow,head,groupLabel,data){
-    const cols=[groupLabel,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte"];
+    const cols=[groupLabel,"Positionen","Versch. Artikel","Gesamtbestand","Belegte Lagerorte","0er-Lagerorte"];
     if(head){ws.getCell(startRow-1,1).value=head;ws.getCell(startRow-1,1).font={name:"Arial",size:12,bold:true,color:{argb:"FF"+NAVYtxt}};}
     cols.forEach((c,i)=>{const cell=ws.getCell(startRow,i+1);cell.value=c;styleHeader(cell);});
     ws.getRow(startRow).height=26;
-    const T={pos:0,art:0,best:0,lo:0};
-    data.forEach((r,ri)=>{T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;
+    const T={pos:0,art:0,best:0,lo:0,zero:0};
+    data.forEach((r,ri)=>{T.pos+=r.pos;T.art+=r.art;T.best+=r.best;T.lo+=r.lo;T.zero+=(r.zero||0);
       const c0=ws.getCell(startRow+1+ri,1);c0.value=r.key;styleBody(c0,ri,true);
-      [r.pos,r.art,r.best,r.lo].forEach((v,k)=>{const c=ws.getCell(startRow+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});});
+      [r.pos,r.art,r.best,r.lo,r.zero||0].forEach((v,k)=>{const c=ws.getCell(startRow+1+ri,k+2);c.value=v;styleBody(c,ri,false);c.numFmt="#,##0";});});
     const tr=startRow+1+data.length;
     const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
-    [T.pos,T.art,T.best,T.lo].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
+    [T.pos,T.art,T.best,T.lo,T.zero].forEach((v,k)=>{const c=ws.getCell(tr,k+2);c.value=v;styleTotal(c,false);c.numFmt="#,##0";});
     return tr;
   }
   const end1=block(5,null,"Kunde",u.byKunde);
   block(end1+3,"Aufschlüsselung nach Lagerort-Art (alle Kunden)","Lagerort-Art (Bemerkung)",u.byBem);
-  ws.columns=[{width:30},{width:17},{width:17},{width:17},{width:18}];
-  setupPrint(ws,5,5);
+  ws.columns=[{width:30},{width:15},{width:15},{width:16},{width:17},{width:15}];
+  setupPrint(ws,6,5);
   return ws;
 }
 
