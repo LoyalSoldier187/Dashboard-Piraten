@@ -148,7 +148,7 @@
 <header class="mast">
   <div class="mast-row">
     <h1>Dashboard-Piraten</h1>
-    <span class="tag">BelegteLagerorte · Aufbereitung &amp; Dashboards</span>
+    <span class="tag">BelegteLagerorte · Aufbereitung &amp; Dashboards · <b style="color:#E4C766">v2 · Top 10</b></span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
   </div>
@@ -383,7 +383,7 @@ function build(){
       rows:u.rows.filter(r=>String(r.Lagerort).startsWith(prefix+"-"))};
     if(wantZero) u.extra.zero={label:"Europalettenlager 0er",
       rows:u.rows.filter(r=>r.Bemerkung==="Europalettenlager" && (+r[zeroCol]||0)===0)};
-    // Top 5 articles by total stock — per customer in merge mode, else for the unit
+    // Top 10 articles by total stock — per customer in merge mode, else for the unit
     if(u.merged){
       u.topByKunde=ok.map(s=>({kunde:s.kunde,top:topArticles(u.rows.filter(r=>r.Kunde===s.kunde))}));
     }else{
