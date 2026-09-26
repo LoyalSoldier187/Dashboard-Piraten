@@ -70,6 +70,16 @@
   .seg button{flex:1;border:none;background:none;padding:8px 6px;border-radius:6px;
     font-size:13px;font-weight:600;color:var(--grey);cursor:pointer;transition:.15s}
   .seg button.on{background:var(--navy);color:#fff;box-shadow:0 1px 3px rgba(20,38,74,.25)}
+  .typeseg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .typeseg button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;
+    border:2px solid var(--line);background:#fcfdff;border-radius:10px;padding:13px 15px;cursor:pointer;
+    font-family:inherit;transition:.15s}
+  .typeseg button:hover{border-color:var(--gold-soft);background:#fffdf5}
+  .typeseg button.on{border-color:var(--navy);background:#fff;box-shadow:0 2px 8px rgba(20,38,74,.10)}
+  .typeseg .tname{font-size:14px;font-weight:700;color:var(--navy)}
+  .typeseg button.on .tname::before{content:"● ";color:var(--gold);font-size:11px}
+  .typeseg .tdesc{font-size:11.5px;color:var(--grey);line-height:1.3}
+  @media(max-width:640px){.typeseg{grid-template-columns:1fr}}
   .check{display:flex;align-items:center;gap:9px;font-size:13.5px;margin:9px 0;cursor:pointer}
   .check input{width:17px;height:17px;accent-color:var(--navy);cursor:pointer}
   .mini{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--grey)}
@@ -109,6 +119,10 @@
 
   .tbl-wrap{background:var(--card);border:1px solid var(--line);border-radius:11px;
     box-shadow:var(--shadow);overflow:auto;margin-bottom:20px}
+  .tbl-wrap.warnbox{border:2px solid var(--warn)}
+  .searchbox{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;
+    padding:11px 14px;font-size:14px;font-family:inherit;margin-bottom:16px;background:#fff}
+  .searchbox:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(31,56,100,.10)}
   table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
   thead th{background:var(--navy);color:#fff;font-weight:700;text-align:center;
     padding:11px 12px;position:sticky;top:0;white-space:nowrap;border-bottom:3px solid var(--gold)}
@@ -154,7 +168,7 @@
 <header class="mast">
   <div class="mast-row">
     <h1>Dashboard-Piraten</h1>
-    <span class="tag">BelegteLagerorte · Aufbereitung &amp; Dashboards · <b style="color:#E4C766">v3 · Top 10</b></span>
+    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v6 · Reichweite & Filter</b></span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
   </div>
@@ -163,14 +177,28 @@
 <main>
   <!-- STEP 1: upload -->
   <section class="panel">
-    <h2><span class="idx">01</span>Reportings laden</h2>
-    <div class="drop" id="drop">
+    <h2><span class="idx">01</span>Was möchtest du einfügen?</h2>
+    <div class="typeseg" id="segType">
+      <button data-type="report" class="on">
+        <span class="tname">BelegteLagerorte</span>
+        <span class="tdesc">Lagerorte je Artikel · wegoptimiert</span>
+      </button>
+      <button data-type="massen">
+        <span class="tname">Massen-Artikel</span>
+        <span class="tdesc">Massenabfrage der Lagerorte</span>
+      </button>
+      <button data-type="geschichte">
+        <span class="tname">Artikelgeschichte</span>
+        <span class="tdesc">Zu-/Abgänge · Bestandsprüfung</span>
+      </button>
+    </div>
+    <div class="drop" id="drop" style="margin-top:16px">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
         <path d="M12 16V4m0 0L8 8m4-4l4 4" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round"/>
       </svg>
       <div class="big">Excel-Dateien hierher ziehen oder klicken</div>
-      <div class="sub">Eine oder mehrere <b>BelegteLagerorte</b>-Dateien (.xlsx) · Kopfzeile in Zeile 1 oder 7 wird automatisch erkannt</div>
+      <div class="sub" id="dropHint">Eine oder mehrere <b>BelegteLagerorte</b>-Dateien (.xlsx) · Kopfzeile wird automatisch erkannt</div>
     </div>
     <input type="file" id="file" accept=".xlsx,.xls" multiple hidden>
     <ul class="files" id="filelist"></ul>
@@ -232,12 +260,24 @@ const NAVY="1F3864", GOLD="C9A227";
 const SRC_COLS=["ArtikelNummer","ArtikelBezeichnung","VPE","LO Bestand","Lagerort"];
 const BLANK_COLS=["Anzahl","Umzugs-LO"];
 const REQUIRED=["ArtikelNummer","ArtikelBezeichnung","VPE","LO Bestand","Lagerort","Bemerkung"];
+// Massenabfrage-Datei: nur Spalten A+E+F+G+J -> ArtikelNummer, Lagerort, Bemerkung, Bestand, WareneingangsNr
+const MASS_SRC_COLS=["ArtikelNummer","Lagerort","Bemerkung","Bestand","WareneingangsNr"];
+const MASS_REQUIRED=["ArtikelNummer","AktuellerBestand","Lagerort","Bestand"];
+// Artikelgeschichte: Zeile 1-6 weg, Spalten B+C+D+E+F+H+K+L+R+S
+const HIST_SRC_COLS=["Mandant","ArtikelNummer","EAN","ArtikelBezeichnung","Typ","DiverseAnzahl","VorgangWann","VorgangWer","InfoWert1","InfoWert2"];
+const HIST_REQUIRED=["ArtikelNummer","Typ","Rechnenwert","VorgangWann"];
 
-let store=[];        // {name, kunde, rows:[], ok, error}
+let store=[];        // {name, kunde, rows:[], ok, error, kind}
 let mode="single";
+let fileType="report"; // report | massen | geschichte — was der Nutzer einfügt
 let result=null;     // built model
 let activeTab=0;
 let topMetric="best";  // "best" = nach Bestand, "lo" = nach Lagerorten
+const TYPE_HINT={
+  report:'Eine oder mehrere <b>BelegteLagerorte</b>-Dateien (.xlsx) · Kopfzeile wird automatisch erkannt',
+  massen:'<b>Massen-Artikel</b>-Datei (.xlsx) · Spalten A+E+F+G+J · Kopfzeile wird automatisch erkannt',
+  geschichte:'<b>Artikelgeschichte</b>-Datei (.xlsx) · Zeilen 1–6 werden entfernt · alle Zu-/Abgänge werden geprüft'
+};
 
 // ---------- helpers ----------
 const $=s=>document.querySelector(s);
@@ -259,28 +299,64 @@ function cmpPath(a,b){
   return 0;
 }
 
-// find header row (0-based) by locating required columns
-function readWorkbook(buf){
+// find header row (0-based); prefer the user-chosen type, fall back to auto-detect
+function readWorkbook(buf,want){
   const wb=XLSX.read(buf,{type:"array",cellDates:true});
   const ws=wb.Sheets[wb.SheetNames[0]];
   const grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
-  let hr=-1;
-  for(let i=0;i<Math.min(grid.length,12);i++){
+  const matchers={
+    report: row=>REQUIRED.filter(c=>row.includes(c)).length>=4,
+    massen: row=>MASS_REQUIRED.filter(c=>row.includes(c)).length>=3 && row.includes("AktuellerBestand"),
+    geschichte: row=>HIST_REQUIRED.filter(c=>row.includes(c)).length>=3 && row.includes("Rechnenwert")
+  };
+  const order = want ? [want,...Object.keys(matchers).filter(k=>k!==want)] : ["report","massen","geschichte"];
+  let hr=-1, kind=null;
+  for(let i=0;i<Math.min(grid.length,12) && hr<0;i++){
     const row=(grid[i]||[]).map(c=>String(c==null?"":c).trim());
-    const hit=REQUIRED.filter(c=>row.includes(c)).length;
-    if(hit>=4){hr=i;break;}
+    for(const k of order){ if(matchers[k](row)){hr=i;kind=k;break;} }
   }
   if(hr<0) throw new Error("Kopfzeile nicht gefunden");
   const head=grid[hr].map(c=>String(c==null?"":c).trim());
-  const rows=[];
+  const rawRows=[];
   for(let i=hr+1;i<grid.length;i++){
     const r=grid[i]; if(!r) continue;
     const o={}; let any=false;
     head.forEach((h,ci)=>{ if(h){o[h]=r[ci]; if(r[ci]!=null&&r[ci]!=="")any=true;} });
-    if(any && o.Lagerort!=null && String(o.Lagerort).trim()!=="") rows.push(o);
+    if(any && o.ArtikelNummer!=null && String(o.ArtikelNummer).trim()!=="") rawRows.push(o);
   }
-  const missing=REQUIRED.filter(c=>!head.includes(c));
-  return {rows,missing};
+  if(kind==="massen"){
+    const rows=rawRows.map(o=>({
+      ArtikelNummer:o.ArtikelNummer,
+      ArtikelBezeichnung:"",
+      Lagerort: (o.Lagerort==null||String(o.Lagerort).trim()==="") ? "99-99-999-99" : o.Lagerort,
+      Bemerkung: (o.Bemerkung==null||String(o.Bemerkung).trim()==="") ? "(ohne Lagerort)" : o.Bemerkung,
+      Bestand: o.Bestand,
+      WareneingangsNr: o.WareneingangsNr,
+      "LO Bestand": (+o.Bestand||0),
+      "Aktueller Bestand": (+o.AktuellerBestand||0)
+    }));
+    return {rows,missing:MASS_REQUIRED.filter(c=>!head.includes(c)),kind};
+  }
+  if(kind==="geschichte"){
+    // keep the movement columns B+C+D+E+F+H+K+L+R+S, plus signed Rechnenwert (col J) for the maths
+    const rows=rawRows.map(o=>{
+      const rw = (+o.Rechnenwert||0);
+      return {
+        Mandant:o.Mandant, ArtikelNummer:o.ArtikelNummer, EAN:o.EAN,
+        ArtikelBezeichnung:o.ArtikelBezeichnung||"", Typ:o.Typ||"",
+        DiverseAnzahl:o.DiverseAnzahl, VorgangWann:o.VorgangWann, VorgangWer:o.VorgangWer,
+        InfoWert1:o.InfoWert1, InfoWert2:o.InfoWert2,
+        _rw:rw,                                  // signed movement
+        _zu: rw>0?rw:0,                          // Zugang
+        _ab: rw<0?rw:0,                          // Abgang (negativ)
+        _grund:o.Aenderungsgrund, _infowas:o.InfoWas
+      };
+    });
+    return {rows,missing:HIST_REQUIRED.filter(c=>!head.includes(c)),kind};
+  }
+  // reporting file: keep only rows with a Lagerort
+  const rows=rawRows.filter(o=>o.Lagerort!=null && String(o.Lagerort).trim()!=="");
+  return {rows,missing:REQUIRED.filter(c=>!head.includes(c)),kind};
 }
 
 // ---------- file intake ----------
@@ -296,9 +372,9 @@ function readFileAsync(f){
     const rd=new FileReader();
     rd.onload=()=>{
       try{
-        const {rows,missing}=readWorkbook(new Uint8Array(rd.result));
+        const {rows,missing,kind}=readWorkbook(new Uint8Array(rd.result),fileType);
         if(missing.length) resolve({name:f.name,kunde:kundeFromName(f.name),rows:[],ok:false,error:"Fehlende Spalten: "+missing.join(", ")});
-        else resolve({name:f.name,kunde:kundeFromName(f.name),rows,ok:true});
+        else resolve({name:f.name,kunde:kundeFromName(f.name),rows,ok:true,kind});
       }catch(err){
         resolve({name:f.name,kunde:kundeFromName(f.name),rows:[],ok:false,error:err.message});
       }
@@ -320,8 +396,10 @@ function renderFiles(){
   const ul=$("#filelist"); ul.innerHTML="";
   store.forEach((s,i)=>{
     const li=document.createElement("li");
+    const badgeTxt = s.ok && (s.kind==="massen"?"Massenabfrage":s.kind==="geschichte"?"Artikelgeschichte":"");
+    const badge = badgeTxt ? ` <span style="background:#E4C766;color:#3a2d05;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;margin-left:6px">${badgeTxt}</span>` : "";
     li.innerHTML = s.ok
-      ? `<span class="nm">${esc(s.kunde)}</span><span class="meta">${esc(s.name)} · ${fmt(s.rows.length)} Positionen</span>`
+      ? `<span class="nm">${esc(s.kunde)}</span>${badge}<span class="meta">${esc(s.name)} · ${fmt(s.rows.length)} Positionen</span>`
       : `<span class="nm">${esc(s.name)}</span><span class="bad">⚠ ${esc(s.error)}</span>`;
     const rm=document.createElement("button"); rm.className="rm"; rm.textContent="×";
     rm.onclick=()=>{store.splice(i,1);renderFiles();};
@@ -340,6 +418,16 @@ $("#segMode").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b)return;
   mode=b.dataset.mode;
   [...$("#segMode").children].forEach(x=>x.classList.toggle("on",x===b));
+});
+$("#segType").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  fileType=b.dataset.type;
+  [...$("#segType").children].forEach(x=>x.classList.toggle("on",x===b));
+  $("#dropHint").innerHTML=TYPE_HINT[fileType]||TYPE_HINT.report;
+  // Standort-/0er-Zusatzreiter sind für die Artikelgeschichte nicht sinnvoll
+  const isHist=fileType==="geschichte";
+  const og=$("#optLoc").closest(".opt-group");
+  if(og) og.style.display=isHist?"none":"";
 });
 $("#locPrefix").addEventListener("input",e=>{
   $("#prefEcho").textContent=e.target.value.trim()||"64";
@@ -365,16 +453,25 @@ function build(){
   const wantLoc=$("#optLoc").checked, wantZero=$("#optZero").checked;
   const doMerge = mode==="merge" && ok.length>1;
 
+  const isHist = ok.length>0 && ok.every(s=>s.kind==="geschichte");
   const units=[];
   if(doMerge){
     const rows=[]; ok.forEach(s=>s.rows.forEach(r=>rows.push({...r,Kunde:s.kunde})));
-    units.push({title:"Sammelauswertung – "+ok.length+" Kunden",
-                subtitle:ok.map(s=>s.kunde).join(" · "), rows, merged:true});
+    const allMass=ok.every(s=>s.kind==="massen");
+    const allHist=ok.every(s=>s.kind==="geschichte");
+    units.push({title:"Sammelauswertung – "+ok.length+" Dateien",
+                subtitle:ok.map(s=>s.kunde).join(" · "), rows, merged:true,
+                kind:allHist?"geschichte":(allMass?"massen":"report")});
   }else{
-    ok.forEach(s=>units.push({title:s.kunde,subtitle:s.name,rows:s.rows.map(r=>({...r})),merged:false}));
+    ok.forEach(s=>units.push({title:s.kunde,subtitle:s.name,rows:s.rows.map(r=>({...r})),merged:false,kind:s.kind||"report"}));
   }
 
   units.forEach(u=>{
+    if(u.kind==="geschichte"){ buildHistUnit(u); return; }
+    // output columns depend on file kind; merged units prepend "Kunde"
+    const base = u.kind==="massen" ? MASS_SRC_COLS : SRC_COLS;
+    u.srcCols = u.merged ? ["Kunde",...base] : base.slice();
+    u.outCols = u.srcCols.concat(BLANK_COLS);
     u.rows.sort(cmpPath);
     u.byBem=aggBy(u.rows,r=>r.Bemerkung==null?"(ohne)":r.Bemerkung,zeroCol);
     if(u.merged) u.byKunde=aggBy(u.rows,r=>r.Kunde,zeroCol);
@@ -390,14 +487,87 @@ function build(){
       rows:u.rows.filter(r=>String(r.Lagerort).startsWith(prefix+"-"))};
     if(wantZero) u.extra.zero={label:"Europalettenlager 0er",
       rows:u.rows.filter(r=>r.Bemerkung==="Europalettenlager" && (+r[zeroCol]||0)===0)};
-    // Top 10 articles by total stock — per customer in merge mode, else for the unit
     if(u.merged){
       u.topByKunde=ok.map(s=>({kunde:s.kunde,top:topArticles(u.rows.filter(r=>r.Kunde===s.kunde))}));
     }else{
       u.top=topArticles(u.rows);
     }
+    // Mehrfachlagerung / Konsolidierung: Artikel auf mehreren echten Lagerorten
+    u.konsol=konsolidierung(u.rows);
   });
-  return {units,doMerge,prefix,zeroCol,wantLoc,wantZero};
+  return {units,doMerge,prefix,zeroCol,wantLoc,wantZero,isHist};
+}
+
+// ---- Artikelgeschichte: Zu-/Abgänge zusammenrechnen, Bestand prüfen ----
+function toDate(v){ const d=new Date(v); return isNaN(d)?null:d; }
+function buildHistUnit(u){
+  u.srcCols = HIST_SRC_COLS.slice();
+  u.outCols = HIST_SRC_COLS.slice();          // keine Anzahl/Umzugs-LO bei Bewegungen
+  // chronologisch sortieren
+  u.rows.sort((a,b)=>{
+    const da=toDate(a.VorgangWann), db=toDate(b.VorgangWann);
+    if(da&&db) return da-db; if(da) return -1; if(db) return 1; return 0;
+  });
+  // Prüfung je Artikel
+  const map=new Map();
+  u.rows.forEach(r=>{
+    const key=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
+    let a=map.get(key);
+    if(!a){a={nr:key,name:r.ArtikelBezeichnung||"",zu:0,ab:0,bew:0,buch:0,best:0,gebucht:null,gebuchtTs:null,ab30:0,ab90:0};map.set(key,a);}
+    a.zu+=r._zu; a.ab+=r._ab; a.bew+=r._rw; a.buch++;
+    if(!a.name && r.ArtikelBezeichnung) a.name=r.ArtikelBezeichnung;
+    // gebuchter Systembestand: letzter "BestandNachBuch"-Wert (InfoWert1) chronologisch
+    if(r._infowas==="BestandNachBuch"){
+      const ts=toDate(r.VorgangWann);
+      if(a.gebuchtTs==null || (ts && ts>=a.gebuchtTs)){ a.gebucht=(+r.InfoWert1||0); a.gebuchtTs=ts; }
+    }
+  });
+  // Verbrauch der letzten 30/90 Tage (Abgänge) je Artikel — für Reichweite
+  const now = u.rows.reduce((mx,r)=>{const t=toDate(r.VorgangWann);return (t&&(!mx||t>mx))?t:mx;},null) || new Date();
+  const d30=new Date(now.getTime()-30*864e5), d90=new Date(now.getTime()-90*864e5);
+  u.rows.forEach(r=>{
+    if(r._rw>=0) return;
+    const a=map.get(r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer); if(!a) return;
+    const t=toDate(r.VorgangWann); if(!t) return;
+    if(t>=d30) a.ab30+=(-r._rw);
+    if(t>=d90) a.ab90+=(-r._rw);
+  });
+  const check=[...map.values()].map(a=>{
+    const bestand = a.gebucht!=null ? a.gebucht : a.bew;      // gebuchter Bestand bevorzugt
+    const proTag30 = a.ab30/30, proTag90 = a.ab90/90;
+    const proTag = proTag30>0 ? proTag30 : proTag90;          // 30-Tage-Schnitt, sonst 90
+    const reichweite = proTag>0 ? Math.round(bestand/proTag) : null;  // Tage
+    return {
+      nr:a.nr,name:a.name,
+      zu:a.zu, ab:a.ab, netto:a.bew, buchungen:a.buch,
+      rechnerisch:a.bew, gebucht:a.gebucht,
+      diff:(a.gebucht==null)?null:(a.bew-a.gebucht),
+      bestand, verbrauch30:Math.round(proTag30*10)/10, verbrauch90:Math.round(proTag90*10)/10,
+      reichweite
+    };
+  }).sort((x,y)=>Math.abs(y.diff||0)-Math.abs(x.diff||0) || y.buchungen-x.buchungen);
+  u.histCheck=check;
+  // Reichweiten-Ansicht: kürzeste Reichweite oben (dringlichste zuerst)
+  u.histReach=check.slice().sort((x,y)=>{
+    const rx=x.reichweite==null?1e9:x.reichweite, ry=y.reichweite==null?1e9:y.reichweite;
+    return rx-ry;
+  });
+  // Auffälligkeiten: Differenz≠0, negativer Bestand, oder Reichweite ≤ 14 Tage
+  u.histIssues=check.filter(a=>
+    (a.diff!=null&&a.diff!==0) || a.rechnerisch<0 || (a.reichweite!=null&&a.reichweite<=14)
+  ).map(a=>{
+    const gr=[];
+    if(a.rechnerisch<0) gr.push("negativer Bestand");
+    if(a.diff!=null&&a.diff!==0) gr.push("Differenz "+fmt(a.diff));
+    if(a.reichweite!=null&&a.reichweite<=14) gr.push("Reichweite "+a.reichweite+" T");
+    return {...a,grund:gr.join(" · ")};
+  }).sort((x,y)=>(x.reichweite==null?1e9:x.reichweite)-(y.reichweite==null?1e9:y.reichweite));
+  // Gesamt-KPIs
+  const tot=check.reduce((s,a)=>({zu:s.zu+a.zu,ab:s.ab+a.ab,netto:s.netto+a.netto,buch:s.buch+a.buchungen}),{zu:0,ab:0,netto:0,buch:0});
+  const auff=check.filter(a=>a.diff!=null && a.diff!==0).length;
+  const neg=check.filter(a=>a.rechnerisch<0).length;
+  const knapp=check.filter(a=>a.reichweite!=null&&a.reichweite<=14).length;
+  u.histKpi={artikel:check.length, buchungen:tot.buch, zu:tot.zu, ab:tot.ab, netto:tot.netto, auffaellig:u.histIssues.length, negativ:neg, knapp:knapp};
 }
 
 // aggregate rows by ArtikelNummer, sum stock, keep name; return top 5 by stock
@@ -412,6 +582,25 @@ function topArticles(rows){
     if(!a.name && r.ArtikelBezeichnung) a.name=r.ArtikelBezeichnung;
   });
   return [...map.values()].map(a=>({nr:a.nr,name:a.name,best:a.best,lo:a.lo.size}));
+}
+// Mehrfachlagerung: Artikel auf mehr als einem echten Lagerort — Kandidaten zum Zusammenlegen
+function konsolidierung(rows){
+  const map=new Map();
+  rows.forEach(r=>{
+    const lo=String(r.Lagerort||"");
+    if(!lo || lo==="99-99-999-99") return;            // "ohne Lagerort" ignorieren
+    const key=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
+    let a=map.get(key);
+    if(!a){a={nr:key,name:r.ArtikelBezeichnung||"",best:0,orte:new Set(),leer:0};map.set(key,a);}
+    a.best+=(+r["LO Bestand"]||0);
+    a.orte.add(lo);
+    if((+r["LO Bestand"]||0)===0) a.leer++;
+    if(!a.name && r.ArtikelBezeichnung) a.name=r.ArtikelBezeichnung;
+  });
+  return [...map.values()]
+    .filter(a=>a.orte.size>1)                          // nur echte Mehrfachlagerung
+    .map(a=>({nr:a.nr,name:a.name,orte:a.orte.size,best:a.best,leer:a.leer}))
+    .sort((x,y)=> y.orte-x.orte || y.best-x.best);
 }
 // return the top n articles, sorted by the chosen metric ("best" or "lo")
 function topN(list,metric,n){
@@ -451,6 +640,8 @@ function renderResult(){
   const u=result.units[activeTab];
   const v=$("#view"); v.innerHTML="";
 
+  if(u.kind==="geschichte"){ renderHist(u,v); return; }
+
   // KPIs
   const kp=document.createElement("div"); kp.className="kpis";
   const items=[["Positionen",u.kpi.pos],["Versch. Artikel",u.kpi.art],
@@ -471,6 +662,29 @@ function renderResult(){
     v.appendChild(topTable("Top 10 Artikel",u.top));
   }
 
+  // Mehrfachlagerung / Konsolidierung + Suchfeld
+  if(u.konsol && u.konsol.length){
+    const search=document.createElement("input");
+    search.type="text"; search.className="searchbox";
+    search.placeholder="🔎 Artikel in Mehrfachlagerung suchen …";
+    v.appendChild(search);
+    const holder=document.createElement("div"); v.appendChild(holder);
+    const draw=()=>{
+      holder.innerHTML="";
+      const q=search.value.trim().toLowerCase();
+      const rows=u.konsol.filter(a=>!q||String(a.nr).toLowerCase().includes(q)||String(a.name).toLowerCase().includes(q));
+      holder.appendChild(histTable("Mehrfachlagerung · Kandidaten zum Zusammenlegen (mehrere Lagerorte)",
+        ["ArtikelNummer","Bezeichnung","Lagerorte","Bestand gesamt","davon leer"],
+        rows, a=>[
+          [esc(a.nr),"l nowrap"],[esc(a.name),"l"],
+          [fmt(a.orte), a.orte>=3?"warn":"navy"],
+          [fmt(a.best),""],
+          [a.leer>0?fmt(a.leer):"–", a.leer>0?"warn":"grey"]
+        ]));
+    };
+    search.addEventListener("input",draw); draw();
+  }
+
   // extra tab summaries
   const ex=[];
   if(u.extra.loc) ex.push(u.extra.loc);
@@ -479,6 +693,130 @@ function renderResult(){
     cap.innerHTML=`<b>${esc(x.label)}</b>: ${fmt(x.rows.length)} Positionen (eigener Reiter in der Excel-Datei)`;
     v.appendChild(cap);
   });
+}
+
+function reichStyle(r){ // Ampelfarbe nach Reichweite (Tage)
+  if(r==null) return "var(--grey)";
+  if(r<=7) return "var(--warn)";
+  if(r<=21) return "#a67c00";
+  return "var(--ok)";
+}
+function renderHist(u,v){
+  const k=u.histKpi;
+  const kp=document.createElement("div"); kp.className="kpis";
+  const items=[["Artikel",k.artikel],["Buchungen",k.buchungen],
+               ["Zugänge",k.zu],["Abgänge",k.ab],["Netto-Bestand",k.netto],
+               ["Knappe Reichweite",k.knapp],["Auffällig",k.auffaellig]];
+  items.forEach(([l,n])=>{
+    const d=document.createElement("div");d.className="kpi";
+    const warn=((l==="Auffällig"||l==="Knappe Reichweite")&&n>0);
+    d.innerHTML=`<div class="n"${warn?' style="color:var(--warn)"':''}>${fmt(n)}</div><div class="l">${l}</div>`;
+    kp.appendChild(d);
+  });
+  v.appendChild(kp);
+
+  // shared search box (filters all history tables below)
+  const search=document.createElement("input");
+  search.type="text"; search.className="searchbox";
+  search.placeholder="🔎 Artikel suchen (Nummer oder Bezeichnung) …";
+  v.appendChild(search);
+
+  const rerender=()=>{
+    [...v.querySelectorAll(".hist-tbl")].forEach(x=>x.remove());
+    const q=search.value.trim().toLowerCase();
+    const match=a=>!q || String(a.nr).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q);
+
+    // 1) Auffälligkeiten (nur wenn vorhanden)
+    const issues=u.histIssues.filter(match);
+    if(u.histIssues.length){
+      v.appendChild(histTable("Auffälligkeiten · Überverkauf, Differenz oder knappe Reichweite",
+        ["ArtikelNummer","Bezeichnung","Rechn. Bestand","Reichweite (T)","Grund"],
+        issues, a=>[
+          [esc(a.nr),"l nowrap"], [esc(a.name),"l"],
+          [fmt(a.rechnerisch), a.rechnerisch<0?"warn":""],
+          [a.reichweite==null?"–":a.reichweite+" T", "reich:"+a.reichweite],
+          [esc(a.grund),"l warn"]
+        ], "warnbox"));
+    }
+
+    // 2) Reichweite / Verbrauch
+    v.appendChild(histTable("Reichweite & Verbrauch · kürzeste zuerst",
+      ["ArtikelNummer","Bezeichnung","Bestand","Ø/Tag (30T)","Ø/Tag (90T)","Reichweite"],
+      u.histReach.filter(match), a=>[
+        [esc(a.nr),"l nowrap"], [esc(a.name),"l"],
+        [fmt(a.bestand),""], [fmt(a.verbrauch30),""], [fmt(a.verbrauch90),""],
+        [a.reichweite==null?"kein Verbrauch":a.reichweite+" Tage", "reich:"+a.reichweite]
+      ]));
+
+    // 3) Bestandsprüfung (vollständig)
+    v.appendChild(histTable("Bestandsprüfung · Zu-/Abgänge zusammengerechnet, rechnerisch vs. gebucht",
+      ["ArtikelNummer","Bezeichnung","Buchungen","Zugänge","Abgänge","Rechn. Bestand","Gebucht","Differenz","Status"],
+      u.histCheck.filter(match), a=>{
+        const ok=a.diff===0, noData=a.diff==null;
+        const st=noData?["–","grey"]:ok?["✓ ok","ok"]:["⚠ prüfen","warn"];
+        return [
+          [esc(a.nr),"l nowrap"],[esc(a.name),"l"],
+          [fmt(a.buchungen),""],[fmt(a.zu),"ok"],[fmt(a.ab),"warn"],
+          [fmt(a.rechnerisch), a.rechnerisch<0?"warn":"navy"],
+          [a.gebucht==null?"–":fmt(a.gebucht),""],
+          [a.diff==null?"–":fmt(a.diff), (a.diff&&a.diff!==0)?"warn":""],
+          [st[0],st[1]]
+        ];
+      }, null, {buch:2,zu:3,ab:4,netto:5}));
+
+    const note=document.createElement("div");note.className="cap hist-tbl";
+    note.innerHTML=`<b>Reichweite</b> = Bestand ÷ Ø-Verbrauch (30-Tage-Schnitt, sonst 90). `
+      +`<b>Differenz ≠ 0</b>, <b>negativer Bestand</b> oder <b>Reichweite ≤ 14 T</b> → Auffälligkeit.`;
+    v.appendChild(note);
+  };
+  search.addEventListener("input",rerender);
+  rerender();
+}
+
+// generic history table builder: rows -> cellFn returns [[value,cls],...]
+function histTable(title,heads,rows,cellFn,boxClass,totalCols){
+  const wrap=document.createElement("div");wrap.className="tbl-wrap hist-tbl";
+  if(boxClass) wrap.classList.add(boxClass);
+  const cap=document.createElement("div");cap.className="cap";cap.style.padding="11px 14px 8px";
+  cap.innerHTML=`<b>${esc(title)}</b> <span style="font-weight:400;color:var(--grey)">· ${fmt(rows.length)} Artikel</span>`;
+  wrap.appendChild(cap);
+  const table=document.createElement("table");
+  table.innerHTML="<thead><tr>"+heads.map((h,i)=>`<th style='text-align:${i<2?'left':'center'}'>${esc(h)}</th>`).join("")+"</tr></thead>";
+  const tb=document.createElement("tbody");
+  if(!rows.length){
+    tb.innerHTML=`<tr><td colspan='${heads.length}' style='text-align:center;color:var(--grey);padding:16px'>Keine Treffer</td></tr>`;
+  }else{
+    const tot=totalCols?{}:null;
+    rows.forEach(r=>{
+      const cells=cellFn(r);
+      const tr=document.createElement("tr");
+      tr.innerHTML=cells.map(([val,cls])=>{
+        let style="",klass="";
+        (cls||"").split(" ").forEach(c=>{
+          if(c==="l")klass="l";
+          else if(c==="nowrap")style+="white-space:nowrap;";
+          else if(c==="warn")style+="color:var(--warn);font-weight:700;";
+          else if(c==="ok")style+="color:var(--ok);";
+          else if(c==="navy")style+="color:var(--navy);font-weight:700;";
+          else if(c==="grey")style+="color:var(--grey);";
+          else if(c.startsWith("reich:")){const rv=c.slice(6);const n=rv==="null"||rv===""?null:+rv;style+=`color:${reichStyle(n)};font-weight:700;`;}
+        });
+        return `<td${klass?' class="'+klass+'"':''}${style?' style="'+style+'"':''}>${val}</td>`;
+      }).join("");
+      tb.appendChild(tr);
+      if(tot) for(const kk in totalCols){ tot[kk]=(tot[kk]||0)+ (r[kk]||0); }
+    });
+    if(totalCols){
+      const trT=document.createElement("tr");trT.className="total";
+      const tds=heads.map((h,i)=>{
+        for(const kk in totalCols){ if(totalCols[kk]===i) return `<td>${fmt(tot[kk])}</td>`; }
+        return i===0?`<td class="l">GESAMT</td>`:"<td></td>";
+      });
+      trT.innerHTML=tds.join(""); tb.appendChild(trT);
+    }
+  }
+  table.appendChild(tb); wrap.appendChild(table);
+  return wrap;
 }
 
 function topTable(title,fullList){
@@ -614,7 +952,9 @@ function aggTable(title,groupCols,data){
 // Shared ExcelJS build logic — used both for Node test and browser app.
 // Exposes buildWorkbook(result) -> ExcelJS.Workbook
 const XNAVY="FF1F3864", NAVYtxt="1F3864", XGOLD="FFC9A227";
-const WIDTHS={Kunde:18,ArtikelNummer:16,ArtikelBezeichnung:52,VPE:7,"LO Bestand":11,Lagerort:15,Anzahl:10,"Umzugs-LO":16,
+const WIDTHS={Kunde:18,ArtikelNummer:22,ArtikelBezeichnung:52,VPE:7,"LO Bestand":11,Lagerort:15,Anzahl:10,"Umzugs-LO":16,
+  Bemerkung:22,Bestand:11,WareneingangsNr:16,
+  Mandant:16,EAN:15,Typ:14,DiverseAnzahl:12,VorgangWann:18,VorgangWer:16,InfoWert1:14,InfoWert2:16,
   "Lagerort-Art (Bemerkung)":30,Positionen:16,"Versch. Artikel":16,Gesamtbestand:16,"Belegte Lagerorte":18};
 
 function sheetNameSafe(n,used){
@@ -669,11 +1009,12 @@ function dataSheet(wb,name,cols,rows,title,subtitle){
   ws.getRow(hr).height=26;
   rows.forEach((row,ri)=>{
     cols.forEach((c,ci)=>{
-      const left=c==="ArtikelBezeichnung";
+      const left=(c==="ArtikelBezeichnung"||c==="Mandant"||c==="ArtikelNummer"||c==="EAN"||c==="VorgangWann"||c==="VorgangWer"||c==="Typ");
       let v=BLANK_COLS.includes(c)?null:row[c];
       const cell=ws.getCell(hr+1+ri,ci+1);
       cell.value=(v===undefined?null:v);
       styleBody(cell,ri,left);
+      if(c==="VorgangWann" && v instanceof Date) cell.numFmt="DD.MM.YYYY HH:MM";
     });
     ws.getRow(hr+1+ri).height=18;
   });
@@ -764,13 +1105,96 @@ function mainDashboard(wb,name,u){
   return ws;
 }
 
+// generic styled data sheet from computed rows; valFn(row)->array of values; numIdx=set of 0-based col indices to number-format; leftIdx default {0,1}
+function simpleSheet(wb,name,title,subtitle,cols,rows,valFn,numIdx,leftIdx){
+  const ws=wb.addWorksheet(name);
+  titleBlock(ws,title,subtitle,true);
+  const hr=4;
+  cols.forEach((c,i)=>{const cell=ws.getCell(hr,i+1);cell.value=c;styleHeader(cell);});
+  ws.getRow(hr).height=26;
+  const left=leftIdx||new Set([0,1]);
+  rows.forEach((r,ri)=>{
+    const vals=valFn(r);
+    vals.forEach((val,ci)=>{
+      const cell=ws.getCell(hr+1+ri,ci+1);cell.value=(val===undefined?null:val);
+      styleBody(cell,ri,left.has(ci));
+      if(numIdx&&numIdx.has(ci)&&typeof val==="number") cell.numFmt="#,##0";
+    });
+    ws.getRow(hr+1+ri).height=18;
+  });
+  ws.columns=cols.map(c=>({width:WIDTHS[c]|| (c.length>16?24:14)}));
+  setupPrint(ws,cols.length,hr);
+  return ws;
+}
+
+function histSheets(wb,used,pfx,u){
+  // --- Sheet 1: Bestandsprüfung (dashboard) ---
+  const ws=wb.addWorksheet(sheetNameSafe(pfx+"Bestandsprüfung",used));
+  ws.getCell("A1").value=u.title;
+  ws.getCell("A1").font={name:"Arial",size:17,bold:true,color:{argb:"FF"+NAVYtxt}};
+  ws.getRow(1).height=24;
+  ws.getCell("A2").value="Bestandsprüfung – alle Zu-/Abgänge zusammengerechnet";
+  ws.getCell("A2").font={name:"Arial",size:12,bold:true,color:{argb:XGOLD}};
+  const k=u.histKpi;
+  ws.getCell("A3").value=`${fmt(k.buchungen)} Buchungen · ${fmt(k.artikel)} Artikel · Zugänge ${fmt(k.zu)} · Abgänge ${fmt(k.ab)} · Netto ${fmt(k.netto)} · ${fmt(k.auffaellig)} auffällig`;
+  ws.getCell("A3").font={name:"Arial",size:9,italic:true,color:{argb:"FF595959"}};
+
+  const cols=["ArtikelNummer","Bezeichnung","Buchungen","Zugänge","Abgänge","Rechn. Bestand","Gebucht","Differenz","Status"];
+  const hr=5;
+  cols.forEach((c,i)=>{const cell=ws.getCell(hr,i+1);cell.value=c;styleHeader(cell);});
+  ws.getRow(hr).height=26;
+  const T={buch:0,zu:0,ab:0,netto:0};
+  u.histCheck.forEach((a,ri)=>{
+    T.buch+=a.buchungen;T.zu+=a.zu;T.ab+=a.ab;T.netto+=a.rechnerisch;
+    const status = a.diff==null?"–":(a.diff===0?"ok":"prüfen");
+    const vals=[a.nr,a.name,a.buchungen,a.zu,a.ab,a.rechnerisch,a.gebucht==null?"–":a.gebucht,a.diff==null?"–":a.diff,status];
+    vals.forEach((val,ci)=>{
+      const c=ws.getCell(hr+1+ri,ci+1);c.value=val;styleBody(c,ri,ci<2);
+      if(ci>=2&&ci<=7&&typeof val==="number") c.numFmt="#,##0";
+    });
+    // farbliche Hervorhebung
+    if(a.rechnerisch<0){const c=ws.getCell(hr+1+ri,6);c.font={name:"Arial",size:10,bold:true,color:{argb:"FFA6491F"}};}
+    if(a.diff!=null&&a.diff!==0){const c=ws.getCell(hr+1+ri,8);c.font={name:"Arial",size:10,bold:true,color:{argb:"FFA6491F"}};}
+    const st=ws.getCell(hr+1+ri,9);
+    if(status==="ok") st.font={name:"Arial",size:10,bold:true,color:{argb:"FF1F7A4D"}};
+    else if(status==="prüfen") st.font={name:"Arial",size:10,bold:true,color:{argb:"FFA6491F"}};
+  });
+  const tr=hr+1+u.histCheck.length;
+  const t0=ws.getCell(tr,1);t0.value="GESAMT";styleTotal(t0,true);
+  ["",T.buch,T.zu,T.ab,T.netto,"","",""].forEach((v,k2)=>{const c=ws.getCell(tr,k2+2);c.value=v;styleTotal(c,false);if(typeof v==="number")c.numFmt="#,##0";});
+  ws.columns=[{width:26},{width:40},{width:12},{width:12},{width:12},{width:15},{width:12},{width:12},{width:11}];
+  setupPrint(ws,9,hr);
+
+  // --- Sheet 2: Auffälligkeiten (nur wenn vorhanden) ---
+  if(u.histIssues.length){
+    simpleSheet(wb,sheetNameSafe(pfx+"Auffälligkeiten",used),
+      "Auffälligkeiten","Überverkauf, Bestandsdifferenz oder knappe Reichweite ("+u.histIssues.length+")",
+      ["ArtikelNummer","Bezeichnung","Rechn. Bestand","Reichweite (T)","Grund"],
+      u.histIssues, a=>[a.nr,a.name,a.rechnerisch,a.reichweite==null?"–":a.reichweite,a.grund],
+      new Set([2,3]));
+  }
+
+  // --- Sheet 3: Reichweite & Verbrauch ---
+  simpleSheet(wb,sheetNameSafe(pfx+"Reichweite",used),
+    "Reichweite & Verbrauch","Bestand ÷ Ø-Verbrauch · kürzeste Reichweite zuerst",
+    ["ArtikelNummer","Bezeichnung","Bestand","Ø/Tag (30T)","Ø/Tag (90T)","Reichweite (Tage)"],
+    u.histReach, a=>[a.nr,a.name,a.bestand,a.verbrauch30,a.verbrauch90,a.reichweite==null?"kein Verbrauch":a.reichweite],
+    new Set([2,3,4,5]));
+
+  // --- Sheet 4: Alle Bewegungen (B+C+D+E+F+H+K+L+R+S) ---
+  dataSheet(wb,sheetNameSafe(pfx+"Alle_Bewegungen",used),HIST_SRC_COLS,u.rows,
+    "Artikelgeschichte – alle Bewegungen",
+    u.rows.length+" Buchungen · chronologisch (Zu- und Abgänge)");
+}
+
 function buildWorkbook(ExcelJS,result){
   const wb=new ExcelJS.Workbook();
   const used=new Set();
   const multiUnit=result.units.length>1 && !result.doMerge;
   result.units.forEach(u=>{
     const pfx=multiUnit?(u.title.slice(0,10)+" · "):"";
-    const allCols=(u.merged?["Kunde"]:[]).concat(SRC_COLS,BLANK_COLS);
+    if(u.kind==="geschichte"){ histSheets(wb,used,pfx,u); return; }
+    const allCols=u.outCols || (u.merged?["Kunde"]:[]).concat(SRC_COLS,BLANK_COLS);
     if(u.merged) mainDashboard(wb,sheetNameSafe("Hauptdashboard",used),u);
     else aggSheet(wb,sheetNameSafe(pfx+"Dashboard",used),u.title,"Lagerbestand – Übersicht nach Lagerort-Art","Lagerort-Art (Bemerkung)",u.byBem,u.top);
 
@@ -782,6 +1206,11 @@ function buildWorkbook(ExcelJS,result){
       u.extra.loc.label,u.extra.loc.rows.length+" Positionen · alle Lagerorte "+result.prefix+"-xx-xxx-xx · wegoptimiert");
     if(u.extra.zero) dataSheet(wb,sheetNameSafe(pfx+"Europal. 0er",used),allCols,u.extra.zero.rows,
       "Europalettenlager – Nullbestände",u.extra.zero.rows.length+" Positionen mit "+result.zeroCol+" = 0 · wegoptimiert");
+
+    if(u.konsol && u.konsol.length) simpleSheet(wb,sheetNameSafe(pfx+"Konsolidierung",used),
+      "Mehrfachlagerung – Konsolidierung","Artikel auf mehreren Lagerorten · Kandidaten zum Zusammenlegen ("+u.konsol.length+")",
+      ["ArtikelNummer","Bezeichnung","Lagerorte","Bestand gesamt","davon leer"],
+      u.konsol, a=>[a.nr,a.name,a.orte,a.best,a.leer], new Set([2,3,4]));
 
     const byBem={};
     u.rows.forEach(r=>{(byBem[r.Bemerkung]=byBem[r.Bemerkung]||[]).push(r);});
@@ -801,9 +1230,10 @@ $("#dl").onclick=async ()=>{
     const wb=buildWorkbook(ExcelJS,result);
     const buf=await wb.xlsx.writeBuffer();
     const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    const fname = result.doMerge ? "Sammelauswertung_BelegteLagerorte.xlsx"
-                : (result.units.length===1 ? result.units[0].title.replace(/[^\w\u00C0-\u017F]+/g,"_").replace(/^_+|_+$/g,"")+"_SORTIERT.xlsx"
-                                            : "Auswertung_BelegteLagerorte.xlsx");
+    const suffix = result.isHist ? "_Bestandspruefung" : "_SORTIERT";
+    const fname = result.doMerge ? (result.isHist?"Bestandspruefung_Artikelgeschichte.xlsx":"Sammelauswertung_BelegteLagerorte.xlsx")
+                : (result.units.length===1 ? result.units[0].title.replace(/[^\w\u00C0-\u017F]+/g,"_").replace(/^_+|_+$/g,"")+suffix+".xlsx"
+                                            : "Auswertung.xlsx");
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob); a.download=fname; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);
