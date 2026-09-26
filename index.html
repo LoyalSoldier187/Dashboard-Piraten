@@ -168,7 +168,7 @@
 <header class="mast">
   <div class="mast-row">
     <h1>Dashboard-Piraten</h1>
-    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v6 · Reichweite & Filter</b></span>
+    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v7 · Befunde</b></span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
   </div>
@@ -562,12 +562,81 @@ function buildHistUnit(u){
     if(a.reichweite!=null&&a.reichweite<=14) gr.push("Reichweite "+a.reichweite+" T");
     return {...a,grund:gr.join(" · ")};
   }).sort((x,y)=>(x.reichweite==null?1e9:x.reichweite)-(y.reichweite==null?1e9:y.reichweite));
+
+  // ---- Detail-Befunde: WELCHE Buchung, WANN, WARUM ----
+  u.histFindings = findHistFindings(u.rows);
+
   // Gesamt-KPIs
   const tot=check.reduce((s,a)=>({zu:s.zu+a.zu,ab:s.ab+a.ab,netto:s.netto+a.netto,buch:s.buch+a.buchungen}),{zu:0,ab:0,netto:0,buch:0});
   const auff=check.filter(a=>a.diff!=null && a.diff!==0).length;
   const neg=check.filter(a=>a.rechnerisch<0).length;
   const knapp=check.filter(a=>a.reichweite!=null&&a.reichweite<=14).length;
-  u.histKpi={artikel:check.length, buchungen:tot.buch, zu:tot.zu, ab:tot.ab, netto:tot.netto, auffaellig:u.histIssues.length, negativ:neg, knapp:knapp};
+  u.histKpi={artikel:check.length, buchungen:tot.buch, zu:tot.zu, ab:tot.ab, netto:tot.netto,
+    auffaellig:u.histIssues.length, negativ:neg, knapp:knapp, befunde:u.histFindings.length};
+}
+
+// Chronologische Ursachen-Analyse je Artikel:
+// Läuft die Bewegungen der Reihe nach durch, führt den rechnerischen Bestand mit und
+// vergleicht ihn an jeder Buchung mit dem vom System gebuchten Bestand (BestandNachBuch).
+// Ein Befund entsteht, wenn (a) der Bestand nach einer Buchung NEGATIV wird, oder
+// (b) die Abweichung rechnerisch↔gebucht sich GEGENÜBER der Vorbuchung ändert
+// (genau diese Buchung hat den Fehler verursacht), oder (c) auffällige Buchungsarten.
+function findHistFindings(rows){
+  const fmtDT=d=>{const t=toDate(d);if(!t)return String(d==null?"":d);
+    const p=n=>String(n).padStart(2,"0");
+    return `${p(t.getDate())}.${p(t.getMonth()+1)}.${t.getFullYear()} ${p(t.getHours())}:${p(t.getMinutes())}`;};
+  const byArt=new Map();
+  rows.forEach(r=>{const k=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
+    if(!byArt.has(k)) byArt.set(k,[]); byArt.get(k).push(r);});
+  const findings=[];
+  byArt.forEach((list,nr)=>{
+    const name=(list.find(r=>r.ArtikelBezeichnung)||{}).ArtikelBezeichnung||"";
+    const sorted=list.slice().sort((a,b)=>{const da=toDate(a.VorgangWann),db=toDate(b.VorgangWann);return (da&&db)?da-db:0;});
+    let lauf=0;               // rechnerischer Bestand
+    let prevGebucht=null;     // vorheriger gebuchter Systembestand
+    sorted.forEach(r=>{
+      const menge=r._rw;
+      lauf+=menge;
+      const grund=String(r._grund||"").trim();
+      const wer=r.VorgangWer||"";
+
+      // (a) KRITISCH: Bestand läuft negativ = echter Überverkauf
+      if(lauf<0){
+        findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:lauf,wer,
+          schwere:"kritisch", problem:"Überverkauf – Bestand negativ",
+          ursache:`Abgang von ${fmt(-menge)} Stk, obwohl der Bestand nicht ausreicht. Rechnerischer Bestand danach ${fmt(lauf)}.`,
+          buchung:grund});
+      }
+
+      // (b) PRÜFEN: gebuchter Systembestand springt anders als die gebuchte Menge
+      // (delta des gebuchten Bestands passt nicht zum Rechenwert) — nur MATERIELLE Sprünge,
+      // damit ±1-Rauschen durch gleiche Zeitstempel nicht als Fehler erscheint.
+      if(r._infowas==="BestandNachBuch" && r.InfoWert1!=null && r.InfoWert1!==""){
+        const gebucht=+r.InfoWert1||0;
+        if(prevGebucht!==null){
+          const deltaSystem=gebucht-prevGebucht;   // wie sich der Systembestand real änderte
+          const unerklaert=deltaSystem-menge;      // Teil, den die Buchungsmenge NICHT erklärt
+          if(Math.abs(unerklaert)>=10){            // Schwelle: materieller, unerklärter Sprung
+            findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:gebucht,wer,
+              schwere:"prüfen",
+              problem:`Unerklärter Bestandssprung ${unerklaert>0?"+":""}${fmt(unerklaert)}`,
+              ursache:`Systembestand springt von ${fmt(prevGebucht)} auf ${fmt(gebucht)} (${deltaSystem>0?"+":""}${fmt(deltaSystem)}), die Buchungsmenge ist aber nur ${fmt(menge)}. Differenz ${fmt(unerklaert)} ohne passende Buchung – vermutlich Nachbuchung/Korrektur/Wareneingang.`,
+              buchung:grund});
+          }
+        }
+        prevGebucht=gebucht;
+      }
+
+      // (c) HINWEIS: Storno / Rückbuchung
+      if(/storno/i.test(grund)){
+        findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:lauf,wer,
+          schwere:"hinweis", problem:"Storno / Rückbuchung",
+          ursache:`Storno korrigiert eine frühere Buchung (${fmt(menge)}).`, buchung:grund});
+      }
+    });
+  });
+  const rank={kritisch:0,"prüfen":1,hinweis:2};
+  return findings.sort((a,b)=> (rank[a.schwere]-rank[b.schwere]) || (toDate(b.wann)-toDate(a.wann)) );
 }
 
 // aggregate rows by ArtikelNummer, sum stock, keep name; return top 5 by stock
@@ -706,10 +775,10 @@ function renderHist(u,v){
   const kp=document.createElement("div"); kp.className="kpis";
   const items=[["Artikel",k.artikel],["Buchungen",k.buchungen],
                ["Zugänge",k.zu],["Abgänge",k.ab],["Netto-Bestand",k.netto],
-               ["Knappe Reichweite",k.knapp],["Auffällig",k.auffaellig]];
+               ["Befunde",k.befunde],["Knappe Reichweite",k.knapp],["Auffällig",k.auffaellig]];
   items.forEach(([l,n])=>{
     const d=document.createElement("div");d.className="kpi";
-    const warn=((l==="Auffällig"||l==="Knappe Reichweite")&&n>0);
+    const warn=((l==="Auffällig"||l==="Knappe Reichweite"||l==="Befunde")&&n>0);
     d.innerHTML=`<div class="n"${warn?' style="color:var(--warn)"':''}>${fmt(n)}</div><div class="l">${l}</div>`;
     kp.appendChild(d);
   });
@@ -725,18 +794,35 @@ function renderHist(u,v){
     [...v.querySelectorAll(".hist-tbl")].forEach(x=>x.remove());
     const q=search.value.trim().toLowerCase();
     const match=a=>!q || String(a.nr).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q);
+    const sevCls={kritisch:"warn","prüfen":"amber",hinweis:"grey"};
+    const sevLabel={kritisch:"✕ kritisch","prüfen":"⚠ prüfen",hinweis:"• Hinweis"};
 
-    // 1) Auffälligkeiten (nur wenn vorhanden)
+    // 0) Detail-Befunde: WAS lief WANN schief und WARUM
+    const finds=u.histFindings.filter(match);
+    v.appendChild(histTable("Befunde · was genau wann schieflief",
+      ["Schwere","Zeitpunkt","ArtikelNummer","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
+      finds, a=>[
+        [sevLabel[a.schwere]||a.schwere, sevCls[a.schwere]||""],
+        [esc(a.wann),"l nowrap"],
+        [esc(a.nr),"l nowrap"],
+        [esc(a.problem),"l "+(a.schwere==="kritisch"?"warn":"")],
+        [esc((a.ursache||"")+(a.buchung?"  ["+a.buchung+"]":"")),"l"],
+        [fmt(a.menge), a.menge<0?"warn":"ok"],
+        [fmt(a.bestandNach), a.bestandNach<0?"warn":""],
+        [esc(a.wer||"–"),"l"]
+      ], u.histFindings.length?"warnbox":null));
+
+    // 1) Auffälligkeiten (Artikel-Übersicht)
     const issues=u.histIssues.filter(match);
     if(u.histIssues.length){
-      v.appendChild(histTable("Auffälligkeiten · Überverkauf, Differenz oder knappe Reichweite",
+      v.appendChild(histTable("Auffällige Artikel · Überverkauf, Differenz oder knappe Reichweite",
         ["ArtikelNummer","Bezeichnung","Rechn. Bestand","Reichweite (T)","Grund"],
         issues, a=>[
           [esc(a.nr),"l nowrap"], [esc(a.name),"l"],
           [fmt(a.rechnerisch), a.rechnerisch<0?"warn":""],
           [a.reichweite==null?"–":a.reichweite+" T", "reich:"+a.reichweite],
           [esc(a.grund),"l warn"]
-        ], "warnbox"));
+        ]));
     }
 
     // 2) Reichweite / Verbrauch
@@ -799,6 +885,7 @@ function histTable(title,heads,rows,cellFn,boxClass,totalCols){
           else if(c==="ok")style+="color:var(--ok);";
           else if(c==="navy")style+="color:var(--navy);font-weight:700;";
           else if(c==="grey")style+="color:var(--grey);";
+          else if(c==="amber")style+="color:#a67c00;font-weight:700;";
           else if(c.startsWith("reich:")){const rv=c.slice(6);const n=rv==="null"||rv===""?null:+rv;style+=`color:${reichStyle(n)};font-weight:700;`;}
         });
         return `<td${klass?' class="'+klass+'"':''}${style?' style="'+style+'"':''}>${val}</td>`;
@@ -955,6 +1042,7 @@ const XNAVY="FF1F3864", NAVYtxt="1F3864", XGOLD="FFC9A227";
 const WIDTHS={Kunde:18,ArtikelNummer:22,ArtikelBezeichnung:52,VPE:7,"LO Bestand":11,Lagerort:15,Anzahl:10,"Umzugs-LO":16,
   Bemerkung:22,Bestand:11,WareneingangsNr:16,
   Mandant:16,EAN:15,Typ:14,DiverseAnzahl:12,VorgangWann:18,VorgangWer:16,InfoWert1:14,InfoWert2:16,
+  Schwere:11,Zeitpunkt:18,Problem:30,"Ursache / Buchung":60,"Bestand danach":14,Bearbeiter:16,Bezeichnung:40,Menge:10,
   "Lagerort-Art (Bemerkung)":30,Positionen:16,"Versch. Artikel":16,Gesamtbestand:16,"Belegte Lagerorte":18};
 
 function sheetNameSafe(n,used){
@@ -1165,7 +1253,18 @@ function histSheets(wb,used,pfx,u){
   ws.columns=[{width:26},{width:40},{width:12},{width:12},{width:12},{width:15},{width:12},{width:12},{width:11}];
   setupPrint(ws,9,hr);
 
-  // --- Sheet 2: Auffälligkeiten (nur wenn vorhanden) ---
+  // --- Sheet 2: Befunde (was genau wann schieflief) ---
+  if(u.histFindings.length){
+    const sevLabel={kritisch:"kritisch","prüfen":"prüfen",hinweis:"Hinweis"};
+    simpleSheet(wb,sheetNameSafe(pfx+"Befunde",used),
+      "Befunde – was genau wann schieflief","Chronologische Ursachenanalyse aller Auffälligkeiten ("+u.histFindings.length+")",
+      ["Schwere","Zeitpunkt","ArtikelNummer","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
+      u.histFindings, a=>[sevLabel[a.schwere]||a.schwere,a.wann,a.nr,a.problem,
+        (a.ursache||"")+(a.buchung?"  ["+a.buchung+"]":""),a.menge,a.bestandNach,a.wer||"–"],
+      new Set([5,6]), new Set([1,2,3,4,7]));
+  }
+
+  // --- Sheet 3: Auffällige Artikel (nur wenn vorhanden) ---
   if(u.histIssues.length){
     simpleSheet(wb,sheetNameSafe(pfx+"Auffälligkeiten",used),
       "Auffälligkeiten","Überverkauf, Bestandsdifferenz oder knappe Reichweite ("+u.histIssues.length+")",
