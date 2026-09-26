@@ -123,6 +123,20 @@
   .searchbox{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;
     padding:11px 14px;font-size:14px;font-family:inherit;margin-bottom:16px;background:#fff}
   .searchbox:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(31,56,100,.10)}
+  .findbar{margin-bottom:16px}
+  .findbar .searchbox{margin-bottom:10px}
+  .fb-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:13px;color:var(--grey)}
+  .fb-row label{display:flex;align-items:center;gap:6px}
+  .fb-row select,.fb-row input{border:1px solid var(--line);border-radius:7px;padding:6px 9px;
+    font-size:13px;font-family:inherit;background:#fff;color:var(--ink)}
+  .fb-row select:focus,.fb-row input:focus{outline:none;border-color:var(--navy)}
+  .fb-count{margin-left:auto;font-weight:700;color:var(--navy)}
+  .reorderctrl{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:8px;
+    font-size:12.5px;color:var(--grey);font-weight:400}
+  .reorderctrl label{display:flex;align-items:center;gap:6px}
+  .reorderctrl select{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-family:inherit;font-size:12.5px}
+  .reorderctrl .ro-val{color:var(--navy);font-size:14px}
+  .reorderctrl input[type=range]{accent-color:var(--navy);width:180px;vertical-align:middle}
   table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
   thead th{background:var(--navy);color:#fff;font-weight:700;text-align:center;
     padding:11px 12px;position:sticky;top:0;white-space:nowrap;border-bottom:3px solid var(--gold)}
@@ -168,7 +182,7 @@
 <header class="mast">
   <div class="mast-row">
     <h1>Dashboard-Piraten</h1>
-    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v7 · Befunde</b></span>
+    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v10 · Verbrauchs-Regler</b></span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
   </div>
@@ -563,16 +577,26 @@ function buildHistUnit(u){
     return {...a,grund:gr.join(" · ")};
   }).sort((x,y)=>(x.reichweite==null?1e9:x.reichweite)-(y.reichweite==null?1e9:y.reichweite));
 
-  // ---- Detail-Befunde: WELCHE Buchung, WANN, WARUM ----
+  // ---- Detail-Befunde: WELCHE Buchung, WANN, WARUM (Sekunden-Blöcke) ----
   u.histFindings = findHistFindings(u.rows);
+  u.histTimeline = findHistFindings._timeline || new Map();
+  // Wer/Was-Auswertung
+  u.histByWer = aggFindings(u.histFindings, f=>f.wer);
+  u.histByKat = aggFindings(u.histFindings, f=>f.kategorie);
+  // Nachbestell-Vorschlag — Basis & Zielreichweite über Regler einstellbar (Standard 30/30)
+  u.histCheckRaw = check;                       // für Neuberechnung durch den Regler
+  u.histReorder = computeReorder(check, "30", 30);
 
   // Gesamt-KPIs
   const tot=check.reduce((s,a)=>({zu:s.zu+a.zu,ab:s.ab+a.ab,netto:s.netto+a.netto,buch:s.buch+a.buchungen}),{zu:0,ab:0,netto:0,buch:0});
   const auff=check.filter(a=>a.diff!=null && a.diff!==0).length;
   const neg=check.filter(a=>a.rechnerisch<0).length;
   const knapp=check.filter(a=>a.reichweite!=null&&a.reichweite<=14).length;
+  const rot=u.histFindings.filter(f=>f.ampel==="rot").length;
+  const gelb=u.histFindings.filter(f=>f.ampel==="gelb").length;
   u.histKpi={artikel:check.length, buchungen:tot.buch, zu:tot.zu, ab:tot.ab, netto:tot.netto,
-    auffaellig:u.histIssues.length, negativ:neg, knapp:knapp, befunde:u.histFindings.length};
+    auffaellig:u.histIssues.length, negativ:neg, knapp:knapp, befunde:u.histFindings.length, rot:rot, gelb:gelb,
+    reorder:u.histReorder.length};
 }
 
 // Chronologische Ursachen-Analyse je Artikel:
@@ -581,62 +605,123 @@ function buildHistUnit(u){
 // Ein Befund entsteht, wenn (a) der Bestand nach einer Buchung NEGATIV wird, oder
 // (b) die Abweichung rechnerisch↔gebucht sich GEGENÜBER der Vorbuchung ändert
 // (genau diese Buchung hat den Fehler verursacht), oder (c) auffällige Buchungsarten.
+function fmtDT(d){const t=toDate(d);if(!t)return String(d==null?"":d);
+  const p=n=>String(n).padStart(2,"0");
+  return `${p(t.getDate())}.${p(t.getMonth()+1)}.${t.getFullYear()} ${p(t.getHours())}:${p(t.getMinutes())}`;}
+// Ampel nach Menge: rot ab 50 (oder negativer Bestand), gelb 10–49, sonst grau
+function ampel(wert,neg){
+  if(neg || wert>=50) return "rot";
+  if(wert>=10) return "gelb";
+  return "grau";
+}
+// Sekunden-genau: Buchungen mit identischem Zeitstempel werden zu EINEM Block zusammengefasst,
+// bevor gegen den Systembestand geprüft wird. So verschwinden die ±1-Artefakte, die nur aus der
+// Sortierung sekundengleicher Buchungen entstehen. Ergebnis: nur echte, materielle Auffälligkeiten.
 function findHistFindings(rows){
-  const fmtDT=d=>{const t=toDate(d);if(!t)return String(d==null?"":d);
-    const p=n=>String(n).padStart(2,"0");
-    return `${p(t.getDate())}.${p(t.getMonth()+1)}.${t.getFullYear()} ${p(t.getHours())}:${p(t.getMinutes())}`;};
   const byArt=new Map();
   rows.forEach(r=>{const k=r.ArtikelNummer==null?"(ohne Nr.)":r.ArtikelNummer;
     if(!byArt.has(k)) byArt.set(k,[]); byArt.get(k).push(r);});
   const findings=[];
+  const timelineByArt=new Map();   // für den Bestandsverlauf
   byArt.forEach((list,nr)=>{
     const name=(list.find(r=>r.ArtikelBezeichnung)||{}).ArtikelBezeichnung||"";
     const sorted=list.slice().sort((a,b)=>{const da=toDate(a.VorgangWann),db=toDate(b.VorgangWann);return (da&&db)?da-db:0;});
-    let lauf=0;               // rechnerischer Bestand
-    let prevGebucht=null;     // vorheriger gebuchter Systembestand
+    // in Sekunden-Blöcke gruppieren (gleicher Zeitstempel = ein Block)
+    const blocks=[]; let cur=null;
     sorted.forEach(r=>{
-      const menge=r._rw;
-      lauf+=menge;
-      const grund=String(r._grund||"").trim();
-      const wer=r.VorgangWer||"";
-
-      // (a) KRITISCH: Bestand läuft negativ = echter Überverkauf
-      if(lauf<0){
-        findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:lauf,wer,
-          schwere:"kritisch", problem:"Überverkauf – Bestand negativ",
-          ursache:`Abgang von ${fmt(-menge)} Stk, obwohl der Bestand nicht ausreicht. Rechnerischer Bestand danach ${fmt(lauf)}.`,
-          buchung:grund});
-      }
-
-      // (b) PRÜFEN: gebuchter Systembestand springt anders als die gebuchte Menge
-      // (delta des gebuchten Bestands passt nicht zum Rechenwert) — nur MATERIELLE Sprünge,
-      // damit ±1-Rauschen durch gleiche Zeitstempel nicht als Fehler erscheint.
-      if(r._infowas==="BestandNachBuch" && r.InfoWert1!=null && r.InfoWert1!==""){
-        const gebucht=+r.InfoWert1||0;
-        if(prevGebucht!==null){
-          const deltaSystem=gebucht-prevGebucht;   // wie sich der Systembestand real änderte
-          const unerklaert=deltaSystem-menge;      // Teil, den die Buchungsmenge NICHT erklärt
-          if(Math.abs(unerklaert)>=10){            // Schwelle: materieller, unerklärter Sprung
-            findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:gebucht,wer,
-              schwere:"prüfen",
-              problem:`Unerklärter Bestandssprung ${unerklaert>0?"+":""}${fmt(unerklaert)}`,
-              ursache:`Systembestand springt von ${fmt(prevGebucht)} auf ${fmt(gebucht)} (${deltaSystem>0?"+":""}${fmt(deltaSystem)}), die Buchungsmenge ist aber nur ${fmt(menge)}. Differenz ${fmt(unerklaert)} ohne passende Buchung – vermutlich Nachbuchung/Korrektur/Wareneingang.`,
-              buchung:grund});
-          }
-        }
-        prevGebucht=gebucht;
-      }
-
-      // (c) HINWEIS: Storno / Rückbuchung
-      if(/storno/i.test(grund)){
-        findings.push({nr,name,wann:fmtDT(r.VorgangWann),typ:r.Typ,menge,bestandNach:lauf,wer,
-          schwere:"hinweis", problem:"Storno / Rückbuchung",
-          ursache:`Storno korrigiert eine frühere Buchung (${fmt(menge)}).`, buchung:grund});
-      }
+      const ts=toDate(r.VorgangWann); const key=ts?Math.floor(ts.getTime()/1000):0;
+      if(!cur || cur.key!==key){ cur={key,ts,rows:[]}; blocks.push(cur); }
+      cur.rows.push(r);
     });
+    let lauf=0;               // rechnerischer Bestand (Kette)
+    let prevGebucht=null;     // Systembestand am Ende des vorigen Blocks
+    const timeline=[];
+    blocks.forEach(blk=>{
+      const rwSum=blk.rows.reduce((s,r)=>s+r._rw,0);
+      const laufVor=lauf; lauf+=rwSum;
+      // Systembestand am Blockende: letzter vorhandener BestandNachBuch-Wert im Block
+      let gebEnde=null;
+      blk.rows.forEach(r=>{ if(r._infowas==="BestandNachBuch"&&r.InfoWert1!=null&&r.InfoWert1!=="") gebEnde=+r.InfoWert1||0; });
+      const bestandNach = gebEnde!=null ? gebEnde : lauf;
+      // Zeitpunkt/Meta des Blocks (repräsentativ: erste Zeile)
+      const r0=blk.rows[0];
+      const grunde=[...new Set(blk.rows.map(r=>String(r._grund||"").trim()).filter(Boolean))];
+      const wer=[...new Set(blk.rows.map(r=>r.VorgangWer).filter(Boolean))].join(", ");
+      const base={nr,name,wann:fmtDT(r0.VorgangWann),ts:blk.ts?blk.ts.getTime():0,
+        menge:rwSum,wer,buchung:grunde.join(" · ")};
+
+      // (a) Bestand läuft negativ = echter Überverkauf (immer rot)
+      if(lauf<0){
+        const w=Math.abs(lauf);
+        findings.push({...base,bestandNach:lauf,wert:w,ampel:"rot",kategorie:"Überverkauf",
+          problem:"Überverkauf – Bestand negativ",
+          ursache:`In diesem Zeitpunkt wurden netto ${fmt(-rwSum)} Stk entnommen, obwohl der Bestand nicht ausreicht. Rechnerischer Bestand danach ${fmt(lauf)} – es wurde mehr gebucht als vorhanden war.`});
+      }
+
+      // (b) unerklärte Blockabweichung: erwarteter Endbestand ≠ tatsächlicher Systembestand
+      // Kleinstabweichungen (<5) sind praktisch immer reine Reihenfolge-Artefakte gleicher
+      // Zeitstempel und werden ignoriert, damit nur echte Differenzen als Befund erscheinen.
+      const RAUSCH=5;
+      if(gebEnde!=null && prevGebucht!==null){
+        const erwartet = prevGebucht + rwSum;
+        const unerklaert = gebEnde - erwartet;
+        if(unerklaert!==0 && Math.abs(unerklaert)>=RAUSCH){
+          const w=Math.abs(unerklaert);
+          findings.push({...base,bestandNach:gebEnde,wert:w,ampel:ampel(w,false),
+            kategorie: unerklaert>0?"Zugang ohne Buchung":"Abgang ohne Buchung",
+            problem:`Unerklärte Differenz ${unerklaert>0?"+":""}${fmt(unerklaert)}`,
+            ursache:`Systembestand ändert sich von ${fmt(prevGebucht)} auf ${fmt(gebEnde)}. Aus den Buchungen dieses Zeitpunkts (${fmt(rwSum)} Stk) wäre ${fmt(erwartet)} zu erwarten. Es fehlen ${fmt(w)} Stk als saubere Buchung – vermutlich ${unerklaert>0?"Wareneingang/Nachbuchung nicht als Zugang erfasst":"Korrektur/Abschreibung/Inventurdifferenz nicht als Abgang erfasst"}.`});
+        }
+      }
+      if(gebEnde!=null) prevGebucht=gebEnde;
+
+      // (c) Storno / Rückbuchung im Block
+      const storno=blk.rows.find(r=>/storno/i.test(String(r._grund||"")));
+      if(storno){
+        findings.push({...base,bestandNach,wert:Math.abs(storno._rw)||Math.abs(rwSum),ampel:ampel(Math.abs(storno._rw||rwSum),false),
+          kategorie:"Storno",problem:"Storno / Rückbuchung",
+          ursache:`Storno/Rückbuchung (${fmt(storno._rw)} Stk). Prüfen, ob die Korrektur berechtigt war.`});
+      }
+      timeline.push({ts:base.ts, wann:base.wann, best:bestandNach, delta:rwSum});
+    });
+    timelineByArt.set(nr,timeline);
   });
-  const rank={kritisch:0,"prüfen":1,hinweis:2};
-  return findings.sort((a,b)=> (rank[a.schwere]-rank[b.schwere]) || (toDate(b.wann)-toDate(a.wann)) );
+  findHistFindings._timeline=timelineByArt;   // an die Funktion hängen, buildHistUnit liest es aus
+  const arank={rot:0,gelb:1,grau:2};
+  return findings.sort((a,b)=> (arank[a.ampel]-arank[b.ampel]) || (b.wert-a.wert) || (b.ts-a.ts) );
+}
+// Nachbestell-Vorschlag berechnen. basis = "30" | "90" (Ø-Verbrauch-Fenster), zieltage = Zielreichweite.
+function computeReorder(check, basis, zieltage){
+  const zt = Math.max(1, +zieltage||30);
+  return check.filter(a=>a.verbrauch30>0 || a.verbrauch90>0).map(a=>{
+    // gewählte Basis; wenn dort kein Verbrauch, auf die andere ausweichen
+    let proTag = basis==="90" ? a.verbrauch90 : a.verbrauch30;
+    if(!(proTag>0)) proTag = basis==="90" ? a.verbrauch30 : a.verbrauch90;
+    const soll = Math.ceil(proTag*zt);                      // Zielbestand für Zielreichweite
+    const bestellen = Math.max(0, soll - (a.bestand||0));   // Fehlmenge
+    const reich = proTag>0 ? Math.round((a.bestand||0)/proTag) : null; // Reichweite auf Basis
+    let dringend="ok";
+    if(reich!=null && reich<=7) dringend="sofort";
+    else if(reich!=null && reich<=14) dringend="bald";
+    return {nr:a.nr,name:a.name,bestand:a.bestand,proTag,reichweite:reich,soll,bestellen,dringend};
+  }).filter(a=>a.bestellen>0).sort((x,y)=>(x.reichweite==null?1e9:x.reichweite)-(y.reichweite==null?1e9:y.reichweite));
+}
+// Wer/Was-Auswertung: Auffälligkeiten je Bearbeiter und je Kategorie
+function aggFindings(findings,keyFn){
+  const m=new Map();
+  findings.forEach(f=>{const k=keyFn(f)||"(unbekannt)";
+    let a=m.get(k); if(!a){a={key:k,anz:0,rot:0,gelb:0,summe:0};m.set(k,a);}
+    a.anz++; if(f.ampel==="rot")a.rot++; else if(f.ampel==="gelb")a.gelb++; a.summe+=f.wert;});
+  return [...m.values()].sort((x,y)=> y.rot-x.rot || y.anz-x.anz);
+}
+// Befunde nach Wunsch sortieren
+function sortFindings(list,by,dir){
+  const s=list.slice(); const m=dir==="asc"?1:-1;
+  const arank={rot:0,gelb:1,grau:2};
+  if(by==="datum") s.sort((a,b)=>m*(a.ts-b.ts));
+  else if(by==="menge") s.sort((a,b)=>m*(a.wert-b.wert));
+  else s.sort((a,b)=>(arank[a.ampel]-arank[b.ampel])||(b.wert-a.wert)||(b.ts-a.ts));
+  return s;
 }
 
 // aggregate rows by ArtikelNummer, sum stock, keep name; return top 5 by stock
@@ -775,42 +860,62 @@ function renderHist(u,v){
   const kp=document.createElement("div"); kp.className="kpis";
   const items=[["Artikel",k.artikel],["Buchungen",k.buchungen],
                ["Zugänge",k.zu],["Abgänge",k.ab],["Netto-Bestand",k.netto],
-               ["Befunde",k.befunde],["Knappe Reichweite",k.knapp],["Auffällig",k.auffaellig]];
-  items.forEach(([l,n])=>{
+               ["Rot",k.rot,"rot"],["Gelb",k.gelb,"gelb"],["Befunde gesamt",k.befunde],["Nachbestellen",k.reorder]];
+  items.forEach(([l,n,amp])=>{
     const d=document.createElement("div");d.className="kpi";
-    const warn=((l==="Auffällig"||l==="Knappe Reichweite"||l==="Befunde")&&n>0);
-    d.innerHTML=`<div class="n"${warn?' style="color:var(--warn)"':''}>${fmt(n)}</div><div class="l">${l}</div>`;
+    let col=""; if(amp==="rot"&&n>0)col='style="color:var(--warn)"'; else if(amp==="gelb"&&n>0)col='style="color:#a67c00"';
+    d.innerHTML=`<div class="n" ${col}>${fmt(n)}</div><div class="l">${l}</div>`;
     kp.appendChild(d);
   });
   v.appendChild(kp);
 
-  // shared search box (filters all history tables below)
-  const search=document.createElement("input");
-  search.type="text"; search.className="searchbox";
-  search.placeholder="🔎 Artikel suchen (Nummer oder Bezeichnung) …";
-  v.appendChild(search);
+  // ---- Befunde-Steuerleiste: Suche · Ampelfilter · Schwelle · Sortierung ----
+  const bar=document.createElement("div"); bar.className="findbar";
+  bar.innerHTML=
+    `<input type="text" class="searchbox fb-search" placeholder="🔎 Artikel suchen (Nummer oder Bezeichnung) …">`
+    +`<div class="fb-row">`
+    +`<label>Ampel: <select class="fb-amp"><option value="alle">alle</option><option value="rot">nur rot</option><option value="rotgelb">rot + gelb</option></select></label>`
+    +`<label>ab Menge ≥ <input type="number" class="fb-min" value="0" min="0" style="width:70px"></label>`
+    +`<label>Sortieren: <select class="fb-sort"><option value="ampel">Ampel (Standard)</option><option value="datum">Datum</option><option value="menge">Menge</option></select></label>`
+    +`<select class="fb-dir"><option value="desc">absteigend</option><option value="asc">aufsteigend</option></select>`
+    +`<span class="fb-count"></span>`
+    +`</div>`;
+  v.appendChild(bar);
+  const search=bar.querySelector(".fb-search");
 
   const rerender=()=>{
     [...v.querySelectorAll(".hist-tbl")].forEach(x=>x.remove());
     const q=search.value.trim().toLowerCase();
     const match=a=>!q || String(a.nr).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q);
-    const sevCls={kritisch:"warn","prüfen":"amber",hinweis:"grey"};
-    const sevLabel={kritisch:"✕ kritisch","prüfen":"⚠ prüfen",hinweis:"• Hinweis"};
+    const ampSel=bar.querySelector(".fb-amp").value;
+    const minVal=+bar.querySelector(".fb-min").value||0;
+    const sortBy=bar.querySelector(".fb-sort").value;
+    const sortDir=bar.querySelector(".fb-dir").value;
+    const ampCls={rot:"warn",gelb:"amber",grau:"grey"};
+    const ampLabel={rot:"🔴 rot",gelb:"🟡 gelb",grau:"⚪ grau"};
 
-    // 0) Detail-Befunde: WAS lief WANN schief und WARUM
-    const finds=u.histFindings.filter(match);
-    v.appendChild(histTable("Befunde · was genau wann schieflief",
-      ["Schwere","Zeitpunkt","ArtikelNummer","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
+    // 0) Detail-Befunde — vollständig, gefiltert & sortiert
+    let finds=u.histFindings.filter(match).filter(a=>a.wert>=minVal);
+    if(ampSel==="rot") finds=finds.filter(a=>a.ampel==="rot");
+    else if(ampSel==="rotgelb") finds=finds.filter(a=>a.ampel!=="grau");
+    finds=sortFindings(finds,sortBy,sortDir);
+    // aktiven Filter für den Excel-Export merken
+    window.histExportFilter={amp:ampSel,min:minVal,sort:sortBy,dir:sortDir};
+    bar.querySelector(".fb-count").textContent=`${fmt(finds.length)} von ${fmt(u.histFindings.length)} Befunden`;
+    const hasRot=finds.some(a=>a.ampel==="rot");
+    v.appendChild(histTable("Befunde · was genau wann schieflief (vollständig)",
+      ["Ampel","Zeitpunkt","ArtikelNummer","Kategorie","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
       finds, a=>[
-        [sevLabel[a.schwere]||a.schwere, sevCls[a.schwere]||""],
+        [ampLabel[a.ampel]||a.ampel, ampCls[a.ampel]||""],
         [esc(a.wann),"l nowrap"],
         [esc(a.nr),"l nowrap"],
-        [esc(a.problem),"l "+(a.schwere==="kritisch"?"warn":"")],
+        [esc(a.kategorie||""),"l"],
+        [esc(a.problem),"l "+(a.ampel==="rot"?"warn":a.ampel==="gelb"?"amber":"")],
         [esc((a.ursache||"")+(a.buchung?"  ["+a.buchung+"]":"")),"l"],
         [fmt(a.menge), a.menge<0?"warn":"ok"],
         [fmt(a.bestandNach), a.bestandNach<0?"warn":""],
         [esc(a.wer||"–"),"l"]
-      ], u.histFindings.length?"warnbox":null));
+      ], hasRot?"warnbox":null));
 
     // 1) Auffälligkeiten (Artikel-Übersicht)
     const issues=u.histIssues.filter(match);
@@ -825,6 +930,27 @@ function renderHist(u,v){
         ]));
     }
 
+    // 1b) Wer/Was-Auswertung (nur wenn es Befunde gibt)
+    if(u.histFindings.length){
+      const werRows=u.histByWer.filter(a=>!q||String(a.key).toLowerCase().includes(q));
+      v.appendChild(histTable("Auffälligkeiten nach Bearbeiter",
+        ["Bearbeiter","Befunde","davon rot","davon gelb","Summe Menge"],
+        werRows, a=>[[esc(a.key),"l"],[fmt(a.anz),""],[fmt(a.rot),a.rot>0?"warn":""],[fmt(a.gelb),a.gelb>0?"amber":""],[fmt(a.summe),""]]));
+      v.appendChild(histTable("Auffälligkeiten nach Kategorie",
+        ["Kategorie","Befunde","davon rot","davon gelb","Summe Menge"],
+        u.histByKat, a=>[[esc(a.key),"l"],[fmt(a.anz),""],[fmt(a.rot),a.rot>0?"warn":""],[fmt(a.gelb),a.gelb>0?"amber":""],[fmt(a.summe),""]]));
+    }
+
+    // 1c) Bestandsverlauf (Diagramm mit Auf-/Ab-Pfeilen)
+    if(u.histTimeline && u.histTimeline.size){
+      // bei Suche: passenden Artikel, sonst den mit den meisten Bewegungen
+      let artNr=null;
+      if(q){ for(const nr of u.histTimeline.keys()){ if(String(nr).toLowerCase().includes(q)){artNr=nr;break;} } }
+      if(!artNr){ let best=-1; for(const [nr,tl] of u.histTimeline){ if(tl.length>best){best=tl.length;artNr=nr;} } }
+      const tl=u.histTimeline.get(artNr)||[];
+      if(tl.length) v.appendChild(timelineChart("Bestandsverlauf · "+artNr, tl));
+    }
+
     // 2) Reichweite / Verbrauch
     v.appendChild(histTable("Reichweite & Verbrauch · kürzeste zuerst",
       ["ArtikelNummer","Bezeichnung","Bestand","Ø/Tag (30T)","Ø/Tag (90T)","Reichweite"],
@@ -833,6 +959,13 @@ function renderHist(u,v){
         [fmt(a.bestand),""], [fmt(a.verbrauch30),""], [fmt(a.verbrauch90),""],
         [a.reichweite==null?"kein Verbrauch":a.reichweite+" Tage", "reich:"+a.reichweite]
       ]));
+
+    // 2b) Nachbestell-Vorschlag
+    if(u.histCheckRaw){
+      const roHolder=document.createElement("div");roHolder.className="hist-tbl";
+      v.appendChild(roHolder);
+      drawReorder(roHolder,u,match);
+    }
 
     // 3) Bestandsprüfung (vollständig)
     v.appendChild(histTable("Bestandsprüfung · Zu-/Abgänge zusammengerechnet, rechnerisch vs. gebucht",
@@ -856,10 +989,78 @@ function renderHist(u,v){
     v.appendChild(note);
   };
   search.addEventListener("input",rerender);
+  bar.querySelectorAll(".fb-amp,.fb-min,.fb-sort,.fb-dir").forEach(el=>el.addEventListener("input",rerender));
   rerender();
 }
 
 // generic history table builder: rows -> cellFn returns [[value,cls],...]
+// Nachbestell-Tabelle inkl. Regler; zeichnet nur sich selbst neu (flüssiges Schieben)
+function drawReorder(holder,u,match){
+  holder.innerHTML="";
+  const st = window.histReorderCfg || (window.histReorderCfg={basis:"30",ziel:30});
+  u.histReorder = computeReorder(u.histCheckRaw, st.basis, st.ziel);
+  const dr={sofort:["⛔ sofort","warn"],bald:["⚠ bald","amber"],ok:["• planen","grey"]};
+  const wrap=histTable(`Nachbestell-Vorschlag · Ø-Basis ${st.basis} Tage · Zielreichweite ${st.ziel} Tage`,
+    ["Dringlichkeit","ArtikelNummer","Bezeichnung","Bestand","Ø/Tag","Reichweite","Zielbestand","Bestellen"],
+    u.histReorder.filter(match), a=>[
+      [dr[a.dringend][0],dr[a.dringend][1]],
+      [esc(a.nr),"l nowrap"],[esc(a.name),"l"],
+      [fmt(a.bestand),""],[fmt(Math.round(a.proTag*10)/10),""],
+      [a.reichweite==null?"–":a.reichweite+" T","reich:"+a.reichweite],
+      [fmt(a.soll),""],[fmt(a.bestellen),"navy"]
+    ]);
+  const ctrl=document.createElement("div");ctrl.className="reorderctrl";
+  ctrl.innerHTML=
+    `<label>Ø-Verbrauch: <select class="ro-basis"><option value="30"${st.basis==="30"?" selected":""}>letzte 30 Tage</option><option value="90"${st.basis==="90"?" selected":""}>letzte 90 Tage</option></select></label>`
+    +`<label class="ro-slabel">Zielreichweite: <b class="ro-val">${st.ziel}</b> Tage `
+    +`<input type="range" class="ro-ziel" min="7" max="120" step="1" value="${st.ziel}"></label>`;
+  wrap.querySelector(".cap").appendChild(ctrl);
+  ctrl.querySelector(".ro-basis").addEventListener("input",e=>{window.histReorderCfg.basis=e.target.value;drawReorder(holder,u,match);});
+  ctrl.querySelector(".ro-ziel").addEventListener("input",e=>{window.histReorderCfg.ziel=+e.target.value;drawReorder(holder,u,match);});
+  holder.appendChild(wrap);
+}
+
+// Bestandsverlauf als Inline-SVG: Linie + grüne Auf-/rote Ab-Pfeile je Bewegung
+function timelineChart(title,tl){
+  const wrap=document.createElement("div");wrap.className="tbl-wrap hist-tbl";
+  const cap=document.createElement("div");cap.className="cap";cap.style.padding="11px 14px 8px";
+  cap.innerHTML=`<b>${esc(title)}</b> <span style="font-weight:400;color:var(--grey)">· ${fmt(tl.length)} Bewegungen · grün = Zugang, rot = Abgang</span>`;
+  wrap.appendChild(cap);
+  // ggf. ausdünnen für Lesbarkeit (max ~120 Punkte)
+  let pts=tl;
+  if(tl.length>120){ const step=Math.ceil(tl.length/120); pts=tl.filter((_,i)=>i%step===0); if(pts[pts.length-1]!==tl[tl.length-1])pts.push(tl[tl.length-1]); }
+  const W=1000,H=260,padL=54,padR=16,padT=16,padB=34;
+  const xs=(i)=>padL+(pts.length<=1?0:i*(W-padL-padR)/(pts.length-1));
+  const vals=pts.map(p=>p.best);
+  const mn=Math.min(0,...vals), mx=Math.max(...vals,1);
+  const ys=(v)=>padT+(H-padT-padB)*(1-(v-mn)/(mx-mn||1));
+  let path=""; pts.forEach((p,i)=>{path+=(i?"L":"M")+xs(i).toFixed(1)+" "+ys(p.best).toFixed(1)+" ";});
+  // Nulllinie
+  const y0=ys(0);
+  // Pfeile: nur nennenswerte Bewegungen zeichnen (Top nach |delta|), max 40
+  const marks=pts.map((p,i)=>({i,p})).filter(o=>o.p.delta!==0)
+    .sort((a,b)=>Math.abs(b.p.delta)-Math.abs(a.p.delta)).slice(0,40);
+  const arrows=marks.map(({i,p})=>{
+    const x=xs(i), y=ys(p.best), up=p.delta>0, col=up?"#1f7a4d":"#a6491f";
+    const dir=up?-1:1; const y1=y+dir*9, y2=y-dir*2;
+    return `<g><line x1="${x.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-width="2"/>`
+      +`<path d="M${(x-3).toFixed(1)} ${(y2+dir*4).toFixed(1)} L${x.toFixed(1)} ${y2.toFixed(1)} L${(x+3).toFixed(1)} ${(y2+dir*4).toFixed(1)}" fill="none" stroke="${col}" stroke-width="2"/></g>`;
+  }).join("");
+  // Achsenbeschriftung: erster/mittlerer/letzter Zeitpunkt
+  const lbl=[0,Math.floor(pts.length/2),pts.length-1].filter((v,i,a)=>a.indexOf(v)===v||true);
+  const xlabels=[0,Math.floor((pts.length-1)/2),pts.length-1].map(i=>
+    `<text x="${xs(i).toFixed(1)}" y="${H-12}" font-size="11" fill="#5b6472" text-anchor="${i===0?'start':i===pts.length-1?'end':'middle'}">${esc((pts[i].wann||'').split(' ')[0])}</text>`).join("");
+  const ylabels=[mn,Math.round((mn+mx)/2),mx].map(v=>
+    `<text x="${padL-8}" y="${(ys(v)+4).toFixed(1)}" font-size="11" fill="#5b6472" text-anchor="end">${fmt(v)}</text>`).join("");
+  const svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;padding:8px 6px 4px">`
+    +`<line x1="${padL}" y1="${y0.toFixed(1)}" x2="${W-padR}" y2="${y0.toFixed(1)}" stroke="#dfe4ec" stroke-width="1"/>`
+    +`<path d="${path}" fill="none" stroke="#1F3864" stroke-width="2"/>`
+    +arrows+xlabels+ylabels
+    +`</svg>`;
+  const box=document.createElement("div"); box.innerHTML=svg; wrap.appendChild(box);
+  return wrap;
+}
+
 function histTable(title,heads,rows,cellFn,boxClass,totalCols){
   const wrap=document.createElement("div");wrap.className="tbl-wrap hist-tbl";
   if(boxClass) wrap.classList.add(boxClass);
@@ -1042,7 +1243,8 @@ const XNAVY="FF1F3864", NAVYtxt="1F3864", XGOLD="FFC9A227";
 const WIDTHS={Kunde:18,ArtikelNummer:22,ArtikelBezeichnung:52,VPE:7,"LO Bestand":11,Lagerort:15,Anzahl:10,"Umzugs-LO":16,
   Bemerkung:22,Bestand:11,WareneingangsNr:16,
   Mandant:16,EAN:15,Typ:14,DiverseAnzahl:12,VorgangWann:18,VorgangWer:16,InfoWert1:14,InfoWert2:16,
-  Schwere:11,Zeitpunkt:18,Problem:30,"Ursache / Buchung":60,"Bestand danach":14,Bearbeiter:16,Bezeichnung:40,Menge:10,
+  Schwere:11,Ampel:9,Kategorie:20,Zeitpunkt:18,Problem:26,"Ursache / Buchung":70,"Bestand danach":14,Bearbeiter:16,Bezeichnung:40,Menge:10,
+  Dringlichkeit:13,"Ø/Tag":10,"Reichweite (T)":13,Zielbestand:13,Bestellen:11,Befunde:11,"davon rot":11,"davon gelb":11,"Summe Menge":13,
   "Lagerort-Art (Bemerkung)":30,Positionen:16,"Versch. Artikel":16,Gesamtbestand:16,"Belegte Lagerorte":18};
 
 function sheetNameSafe(n,used){
@@ -1253,18 +1455,54 @@ function histSheets(wb,used,pfx,u){
   ws.columns=[{width:26},{width:40},{width:12},{width:12},{width:12},{width:15},{width:12},{width:12},{width:11}];
   setupPrint(ws,9,hr);
 
-  // --- Sheet 2: Befunde (was genau wann schieflief) ---
-  if(u.histFindings.length){
-    const sevLabel={kritisch:"kritisch","prüfen":"prüfen",hinweis:"Hinweis"};
-    simpleSheet(wb,sheetNameSafe(pfx+"Befunde",used),
-      "Befunde – was genau wann schieflief","Chronologische Ursachenanalyse aller Auffälligkeiten ("+u.histFindings.length+")",
-      ["Schwere","Zeitpunkt","ArtikelNummer","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
-      u.histFindings, a=>[sevLabel[a.schwere]||a.schwere,a.wann,a.nr,a.problem,
+  // --- Sheet 2: Befunde — mit aktivem Filter aus der Ansicht (Ampel/Schwelle/Sortierung) ---
+  const flt=window.histExportFilter||{amp:"alle",min:0,sort:"ampel",dir:"desc"};
+  let befunde=u.histFindings.slice().filter(a=>a.wert>=(flt.min||0));
+  if(flt.amp==="rot") befunde=befunde.filter(a=>a.ampel==="rot");
+  else if(flt.amp==="rotgelb") befunde=befunde.filter(a=>a.ampel!=="grau");
+  befunde=sortFindings(befunde,flt.sort,flt.dir);
+  if(befunde.length){
+    const ampLabel={rot:"ROT",gelb:"GELB",grau:"grau"};
+    const rot=befunde.filter(f=>f.ampel==="rot").length;
+    const gelb=befunde.filter(f=>f.ampel==="gelb").length;
+    const fltTxt = flt.amp==="alle"&&(!flt.min) ? "alle" : `gefiltert (${flt.amp}${flt.min?", ab "+flt.min:""})`;
+    const ws=simpleSheet(wb,sheetNameSafe(pfx+"Befunde",used),
+      "Befunde – was genau wann schieflief",
+      `${befunde.length} Befunde · ${fltTxt} · ${rot} rot · ${gelb} gelb`,
+      ["Ampel","Zeitpunkt","ArtikelNummer","Kategorie","Problem","Ursache / Buchung","Menge","Bestand danach","Bearbeiter"],
+      befunde, a=>[ampLabel[a.ampel]||a.ampel,a.wann,a.nr,a.kategorie||"",a.problem,
         (a.ursache||"")+(a.buchung?"  ["+a.buchung+"]":""),a.menge,a.bestandNach,a.wer||"–"],
-      new Set([5,6]), new Set([1,2,3,4,7]));
+      new Set([6,7]), new Set([1,2,3,4,5,8]));
+    befunde.forEach((a,ri)=>{
+      const c=ws.getCell(5+ri,1);
+      const col = a.ampel==="rot"?"FFA6491F":a.ampel==="gelb"?"FFA67C00":"FF999999";
+      c.font={name:"Arial",size:10,bold:true,color:{argb:col}};
+    });
   }
 
-  // --- Sheet 3: Auffällige Artikel (nur wenn vorhanden) ---
+  // --- Wer/Was-Auswertung ---
+  if(u.histByWer&&u.histByWer.length) simpleSheet(wb,sheetNameSafe(pfx+"Nach Bearbeiter",used),
+    "Auffälligkeiten nach Bearbeiter","Wo häufen sich Befunde",
+    ["Bearbeiter","Befunde","davon rot","davon gelb","Summe Menge"],
+    u.histByWer, a=>[a.key,a.anz,a.rot,a.gelb,a.summe], new Set([1,2,3,4]), new Set([0]));
+  if(u.histByKat&&u.histByKat.length) simpleSheet(wb,sheetNameSafe(pfx+"Nach Kategorie",used),
+    "Auffälligkeiten nach Kategorie","Art der Abweichung",
+    ["Kategorie","Befunde","davon rot","davon gelb","Summe Menge"],
+    u.histByKat, a=>[a.key,a.anz,a.rot,a.gelb,a.summe], new Set([1,2,3,4]), new Set([0]));
+
+  // --- Nachbestell-Vorschlag (mit aktivem Regler-Stand) ---
+  const rocfg=window.histReorderCfg||{basis:"30",ziel:30};
+  const reorder = u.histCheckRaw ? computeReorder(u.histCheckRaw, rocfg.basis, rocfg.ziel) : (u.histReorder||[]);
+  if(reorder.length){
+    const drl={sofort:"SOFORT",bald:"bald",ok:"planen"};
+    simpleSheet(wb,sheetNameSafe(pfx+"Nachbestellen",used),
+      "Nachbestell-Vorschlag",`Ø-Basis ${rocfg.basis} Tage · Zielreichweite ${rocfg.ziel} Tage · dringendste zuerst (${reorder.length})`,
+      ["Dringlichkeit","ArtikelNummer","Bezeichnung","Bestand","Ø/Tag","Reichweite (T)","Zielbestand","Bestellen"],
+      reorder, a=>[drl[a.dringend]||a.dringend,a.nr,a.name,a.bestand,Math.round(a.proTag*10)/10,
+        a.reichweite==null?"–":a.reichweite,a.soll,a.bestellen], new Set([3,4,6,7]), new Set([0,1,2]));
+  }
+
+  // --- Auffällige Artikel (nur wenn vorhanden) ---
   if(u.histIssues.length){
     simpleSheet(wb,sheetNameSafe(pfx+"Auffälligkeiten",used),
       "Auffälligkeiten","Überverkauf, Bestandsdifferenz oder knappe Reichweite ("+u.histIssues.length+")",
