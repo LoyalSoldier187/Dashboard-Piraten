@@ -182,7 +182,7 @@
 <header class="mast">
   <div class="mast-row">
     <h1>Dashboard-Piraten</h1>
-    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v10 · Verbrauchs-Regler</b></span>
+    <span class="tag">Lagerorte · Massen-Artikel · Artikelgeschichte · <b style="color:#E4C766">v11 · Volldaten-Prüfung</b></span>
     <span class="spacer"></span>
     <span class="count-pill" id="pill">Bereit</span>
   </div>
@@ -352,18 +352,25 @@ function readWorkbook(buf,want){
     return {rows,missing:MASS_REQUIRED.filter(c=>!head.includes(c)),kind};
   }
   if(kind==="geschichte"){
-    // keep the movement columns B+C+D+E+F+H+K+L+R+S, plus signed Rechnenwert (col J) for the maths
+    // GESAMTE Originaldatei übernehmen – alle Spalten bleiben erhalten, damit die Prüfung
+    // wirklich alles auswerten kann. Zusätzlich abgeleitete Felder für die Rechnung.
     const rows=rawRows.map(o=>{
       const rw = (+o.Rechnenwert||0);
+      const aend = (o.Aenderungsanzahl!=null && o.Aenderungsanzahl!=="") ? (+o.Aenderungsanzahl||0)
+                 : (o.DiverseAnzahl!=null ? (+o.DiverseAnzahl||0) : Math.abs(rw));
+      // Echtes Storno nur über Aenderungsgrund erkennen. DiverseWas="StornoDatum" ist nur
+      // ein Feldname (steht in fast jeder Zeile) und darf NICHT als Storno zählen.
+      const isStorno = /storno/i.test(String(o.Aenderungsgrund||""));
       return {
-        Mandant:o.Mandant, ArtikelNummer:o.ArtikelNummer, EAN:o.EAN,
-        ArtikelBezeichnung:o.ArtikelBezeichnung||"", Typ:o.Typ||"",
-        DiverseAnzahl:o.DiverseAnzahl, VorgangWann:o.VorgangWann, VorgangWer:o.VorgangWer,
-        InfoWert1:o.InfoWert1, InfoWert2:o.InfoWert2,
-        _rw:rw,                                  // signed movement
-        _zu: rw>0?rw:0,                          // Zugang
-        _ab: rw<0?rw:0,                          // Abgang (negativ)
-        _grund:o.Aenderungsgrund, _infowas:o.InfoWas
+        ...o,                                    // ALLE Originalspalten behalten
+        _rw:rw,                                  // vorzeichenbehaftete Bewegung (Rechnenwert)
+        _aend:aend,                              // tatsächliche Änderungsmenge
+        _zu: rw>0?rw:0,
+        _ab: rw<0?rw:0,
+        _grund:o.Aenderungsgrund,
+        _info:o.Buchungsinfo||"",                // Charge/MHD, "von LS ..." – erklärt Herkunft
+        _infowas:o.InfoWas,
+        _storno:isStorno
       };
     });
     return {rows,missing:HIST_REQUIRED.filter(c=>!head.includes(c)),kind};
@@ -667,20 +674,35 @@ function findHistFindings(rows){
         const unerklaert = gebEnde - erwartet;
         if(unerklaert!==0 && Math.abs(unerklaert)>=RAUSCH){
           const w=Math.abs(unerklaert);
+          // Belege/Zusatzinfos aus der GESAMTEN Datei heranziehen, um die Ursache zu benennen
+          const infos=[...new Set(blk.rows.map(r=>String(r._info||"").trim()).filter(Boolean))];
+          const gruende=[...new Set(blk.rows.map(r=>String(r._grund||"").trim()).filter(Boolean))];
+          const belegLS = infos.find(t=>/(^|\s)LS\s|von\s+LS/i.test(t));      // Lieferschein-Hinweis
+          const chargen = infos.find(t=>/charge|mhd/i.test(t));
+          let hinweis="";
+          if(unerklaert>0){
+            hinweis = belegLS ? `Es gibt einen Wareneingang-Hinweis (${belegLS}), der nicht als eigene Zugangsbuchung in der Historie steht.`
+                    : chargen ? `Ein Chargen-/MHD-Eintrag (${chargen}) deutet auf einen Wareneingang ohne saubere Zugangsbuchung.`
+                    : `Vermutlich ein Wareneingang/eine Nachbuchung, die nicht als eigene Zugangszeile erfasst wurde.`;
+          } else {
+            hinweis = `Vermutlich eine Korrektur/Abschreibung/Inventurdifferenz, die nicht als eigene Abgangszeile erfasst wurde.`;
+          }
           findings.push({...base,bestandNach:gebEnde,wert:w,ampel:ampel(w,false),
             kategorie: unerklaert>0?"Zugang ohne Buchung":"Abgang ohne Buchung",
             problem:`Unerklärte Differenz ${unerklaert>0?"+":""}${fmt(unerklaert)}`,
-            ursache:`Systembestand ändert sich von ${fmt(prevGebucht)} auf ${fmt(gebEnde)}. Aus den Buchungen dieses Zeitpunkts (${fmt(rwSum)} Stk) wäre ${fmt(erwartet)} zu erwarten. Es fehlen ${fmt(w)} Stk als saubere Buchung – vermutlich ${unerklaert>0?"Wareneingang/Nachbuchung nicht als Zugang erfasst":"Korrektur/Abschreibung/Inventurdifferenz nicht als Abgang erfasst"}.`});
+            beleg: infos.join(" · "),
+            ursache:`Systembestand ändert sich von ${fmt(prevGebucht)} auf ${fmt(gebEnde)}. Aus den Buchungen dieses Zeitpunkts (${fmt(rwSum)} Stk, Grund: ${gruende.join(", ")||"–"}) wäre ${fmt(erwartet)} zu erwarten – es fehlen ${fmt(w)} Stk als saubere Buchung. ${hinweis}`});
         }
       }
       if(gebEnde!=null) prevGebucht=gebEnde;
 
-      // (c) Storno / Rückbuchung im Block
-      const storno=blk.rows.find(r=>/storno/i.test(String(r._grund||"")));
+      // (c) Storno / Rückbuchung im Block (aus Aenderungsgrund ODER DiverseWas)
+      const storno=blk.rows.find(r=>r._storno);
       if(storno){
+        const info=String(storno._info||"").trim();
         findings.push({...base,bestandNach,wert:Math.abs(storno._rw)||Math.abs(rwSum),ampel:ampel(Math.abs(storno._rw||rwSum),false),
-          kategorie:"Storno",problem:"Storno / Rückbuchung",
-          ursache:`Storno/Rückbuchung (${fmt(storno._rw)} Stk). Prüfen, ob die Korrektur berechtigt war.`});
+          kategorie:"Storno",problem:"Storno / Rückbuchung", beleg:info,
+          ursache:`Storno/Rückbuchung von ${fmt(storno._rw)} Stk${info?" ("+info+")":""} durch ${storno.VorgangWer||base.wer}. Prüfen, ob die Korrektur berechtigt war.`});
       }
       timeline.push({ts:base.ts, wann:base.wann, best:bestandNach, delta:rwSum});
     });
